@@ -449,13 +449,14 @@ const CFG = (() => {
   return { base: (q.get('api') || 'http://localhost:11435/v1').replace(/\/+$/, ''), model: q.get('model') || 'qwen2.5' };
 })();
 
-const SYSTEM = `You are Beryl, the build agent inside Crane Builder, made by Beryl Labs. You run on the qwen2.5 model on the user's own GPU server (berylize-node); say so if asked which model you are. Be concise and direct.
+const SYSTEM = `You are Beryl, the build agent inside Crane Builder, made by Beryl Labs. You run on the open-weights model "MODEL_NAME" on the user's own GPU server (berylize-node); say so if asked which model you are. Be concise and direct.
 
 You can change this page's design live. When the user asks for a visual change, reply with one short sentence, then ONE fenced css block containing the rules; the page applies it instantly (use !important when overriding existing rules). If the user asks for new behavior or a feature that CSS cannot do, reply with one short sentence and ONE fenced js block (plain browser JavaScript, no imports, runs once; it may create elements and append them to document.body); the user clicks Run to apply it. Put nothing but code inside fences. If no UI change is requested, just answer normally.
 
 Page structure: .app > header.header (.logo > .logo-c .logo-rane .logo-tag, .divider-v, .btn-project, .btn-new, .header-spacer, .tab-group > .tab, .status-pill > .status-dot, .btn-ship) and .body-grid with three columns. Left: aside.chat-sidebar (.messages > .msg.me/.msg.bot > .msg-meta .msg-bubble .msg-steps > .step; .composer-wrap > .composer > textarea + .composer-row > .tool-btn, .model-chip, .composer-spacer, .btn-mic, .btn-send). Center: main.main-panel (.url-bar > .url-text .live-badge; .preview-frame > .idle-state > .idle-icon .idle-title .idle-sub .idle-pulse, or .code-pane). Right: aside.agent-sidebar (.agent-card > img, .agent-card-overlay, .live-badge-pill, .voice-overlay > .agent-name .agent-role, .voice-canvas-wrap > .voice-canvas-label, canvas; .agent-controls > .ctrl-btn; .transcript-strip > .transcript-label).
 CSS variables on :root: --bg #09090b, --surface #111113, --surface2 #18181b, --border, --border-mid, --fg, --fg-2..--fg-5 (text greys), --gold #eeca50, --gold-dim #c6a23a, --gold-dark #6c4a08, --gold-grad, --gold-chrome, --green #34d399, --red #dc2626. Fonts: Geist (UI), Geist Mono (labels), Instrument Serif (accents).`;
 
+const short = (id) => id.replace(/^hf\.co\/[^/]+\//, '').replace(/-GGUF/i, '');
 const PATCH_KEY = 'crane.patches';
 const loadPatches = () => { try { return JSON.parse(localStorage.getItem(PATCH_KEY) || '[]'); } catch (e) { return []; } };
 const runJs = (code) => { try { new Function(code)(); return null; } catch (e) { return e.message; } };
@@ -521,7 +522,7 @@ function App() {
   useEffect(() => { const f = feedRef.current; f.scrollTop = f.scrollHeight; }, [msgs]);
 
   const refreshModels = () => fetch(CFG.base + '/models').then(r => r.json())
-    .then(j => { setOnline(true); setModels((j.data || []).map(m => m.id)); })
+    .then(j => { const ids = (j.data || []).map(m => m.id); setOnline(true); setModels(ids); setModel(cur => (ids.length && !ids.includes(cur) && !ids.includes(cur + ':latest')) ? ids[0] : cur); })
     .catch(() => setOnline(false));
   useEffect(() => { refreshModels(); }, []);
 
@@ -568,7 +569,7 @@ function App() {
     setBusy(true);
     const setLast = (t, error, extra) => setMsgs(m => { const c = m.slice(); c[c.length - 1] = { ...c[c.length - 1], text: t, error, ...extra }; return c; });
     try {
-      const res = await fetch(CFG.base + '/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model, temperature: 0.4, messages: [{ role: 'system', content: SYSTEM }].concat(history), stream: true }) });
+      const res = await fetch(CFG.base + '/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model, temperature: 0.4, messages: [{ role: 'system', content: SYSTEM.replace('MODEL_NAME', short(model)) }].concat(history), stream: true }) });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const reader = res.body.getReader(), dec = new TextDecoder();
       let buf = '', out = '';
@@ -633,7 +634,7 @@ function App() {
     </div>
     <div className="status-pill">
       <span className="status-dot" style={online === true ? {} : { background: 'var(--fg-5)', animation: 'none' }}></span>
-      {model} · berylize-node
+      {short(model)} · berylize-node
     </div>
     <button className="btn-ship">SHIP</button>
   </header>
@@ -673,13 +674,13 @@ function App() {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
             </button>
             <div style={{ position: 'relative' }}>
-              <button className="model-chip" onClick={() => { if (!menuOpen) refreshModels(); setMenuOpen(o => !o); }}>{model}
+              <button className="model-chip" onClick={() => { if (!menuOpen) refreshModels(); setMenuOpen(o => !o); }}>{short(model)}
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>
               </button>
               {menuOpen && (
                 <div style={{ position: 'absolute', bottom: '34px', left: 0, minWidth: '220px', background: 'var(--surface2)', border: '1px solid var(--border-mid)', borderRadius: '10px', padding: '4px', zIndex: 10, boxShadow: '0 10px 30px rgba(0,0,0,.5)' }}>
                   {(models.length ? models : [model]).map(id => (
-                    <button key={id} onClick={() => { setModel(id); setMenuOpen(false); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-2)' }}>{id} · berylize-node</button>
+                    <button key={id} onClick={() => { setModel(id); setMenuOpen(false); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-2)' }}>{short(id)} · berylize-node</button>
                   ))}
                 </div>
               )}
