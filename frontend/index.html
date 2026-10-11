@@ -442,6 +442,11 @@ const MicIcon = () => (<svg width="16" height="16" viewBox="0 0 24 24" fill="non
 
 const VOICE_LABELS = { listening:'LISTENING', muted:'MUTED', speaking:'SPEAKING', 'speaker-off':'SPEAKER OFF', idle:'IDLE' };
 
+const CFG = (() => {
+  const q = new URLSearchParams(location.search);
+  return { base: (q.get('api') || 'http://localhost:11434/v1').replace(/\/+$/, ''), model: q.get('model') || 'qwen2.5' };
+})();
+
 function Msg({ who, via, text, steps }) {
   return (
     <div className={'msg ' + who}>
@@ -490,19 +495,56 @@ function App() {
   const [msgs, setMsgs] = useState(INITIAL_MSGS);
   const [draft, setDraft] = useState('');
   const feedRef = useRef(null);
+  const [model, setModel] = useState(CFG.model);
+  const [models, setModels] = useState([]);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [online, setOnline] = useState(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => { const f = feedRef.current; f.scrollTop = f.scrollHeight; }, [msgs]);
+
+  const refreshModels = () => fetch(CFG.base + '/models').then(r => r.json())
+    .then(j => { setOnline(true); setModels((j.data || []).map(m => m.id)); })
+    .catch(() => setOnline(false));
+  useEffect(() => { refreshModels(); }, []);
 
   const toggleMic = () => { const on = !micOn; setMicOn(on); setVoiceState(on ? 'listening' : 'muted'); };
   const toggleSpeaker = () => { const on = !speakerOn; setSpeakerOn(on); setVoiceState(on ? (micOn ? 'listening' : 'muted') : 'speaker-off'); };
   const endCall = () => { setMicOn(false); setSpeakerOn(true); setVoiceState('idle'); };
 
-  const addMsg = (text, who, via, steps) => setMsgs(m => m.concat({ text, who, via, steps }));
-  const sendMsg = () => {
+  const sendMsg = async () => {
     const text = draft.trim();
-    if (!text) return;
-    addMsg(text, 'me', micOn ? 'VOICE' : 'TEXT');
+    if (!text || busy) return;
+    const history = msgs.filter(m => !m.error).map(m => ({ role: m.who === 'me' ? 'user' : 'assistant', content: m.text })).concat({ role: 'user', content: text });
+    setMsgs(m => m.concat({ text, who: 'me', via: micOn ? 'VOICE' : 'TEXT' }, { text: '…', who: 'bot', via: '' }));
     setDraft('');
+    setBusy(true);
+    const setLast = (t, error) => setMsgs(m => { const c = m.slice(); c[c.length - 1] = { ...c[c.length - 1], text: t, error }; return c; });
+    try {
+      const res = await fetch(CFG.base + '/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model, messages: history, stream: true }) });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const reader = res.body.getReader(), dec = new TextDecoder();
+      let buf = '', out = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const line of lines) {
+          const t = line.trim();
+          if (!t.startsWith('data:')) continue;
+          const d = t.slice(5).trim();
+          if (d === '[DONE]') continue;
+          try { const j = JSON.parse(d); out += (j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content) || ''; setLast(out); } catch (e) {}
+        }
+      }
+      if (!out) setLast('(empty response)', true);
+      setOnline(true);
+    } catch (e) {
+      setOnline(false);
+      setLast("Couldn't reach " + CFG.base + " (" + e.message + "). Check that the tunnel is running and that Ollama allows this site's origin (OLLAMA_ORIGINS).", true);
+    }
+    setBusy(false);
   };
 
   const micStyle = micOn ? { background:'#eeca50', color:'#1a1204', borderColor:'rgba(255,236,170,.6)' } : {};
@@ -533,8 +575,8 @@ function App() {
       <button className={tab === 'code' ? 'tab active' : 'tab inactive'} onClick={() => setTab('code')}>CODE</button>
     </div>
     <div className="status-pill">
-      <span className="status-dot"></span>
-      berylize-7b · CPU
+      <span className="status-dot" style={online === true ? {} : { background: 'var(--fg-5)', animation: 'none' }}></span>
+      {model} · berylize-node
     </div>
     <button className="btn-ship">SHIP</button>
   </header>
@@ -573,9 +615,18 @@ function App() {
             <button className="tool-btn" title="Commands">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
             </button>
-            <button className="model-chip">berylize-7b
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>
-            </button>
+            <div style={{ position: 'relative' }}>
+              <button className="model-chip" onClick={() => { if (!menuOpen) refreshModels(); setMenuOpen(o => !o); }}>{model}
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              {menuOpen && (
+                <div style={{ position: 'absolute', bottom: '34px', left: 0, minWidth: '220px', background: 'var(--surface2)', border: '1px solid var(--border-mid)', borderRadius: '10px', padding: '4px', zIndex: 10, boxShadow: '0 10px 30px rgba(0,0,0,.5)' }}>
+                  {(models.length ? models : [model]).map(id => (
+                    <button key={id} onClick={() => { setModel(id); setMenuOpen(false); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-2)' }}>{id} · berylize-node</button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="composer-spacer"></div>
             <button className="btn-mic" id="micBtn" title="Voice" onClick={toggleMic} style={micStyle}>
               <MicIcon />
