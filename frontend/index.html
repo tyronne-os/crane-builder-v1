@@ -544,7 +544,7 @@ function App() {
       setOnline(true);
     } catch (e) {
       setOnline(false);
-      setLast("Couldn't reach " + CFG.base + " (" + e.message + "). Start the local proxy (scripts/cors_proxy.py) and make sure the tunnel to the GPU VM is up. Open this page at https://aibruh-crane-builder-v1.hf.space, not inside huggingface.co.", true);
+      setLast("Couldn't reach " + CFG.base + " (" + e.message + "). Start the local proxy (scripts/cors_proxy.py) and make sure the tunnel to the GPU VM is up. Open this page at https://aibruh-crane-builder-v1.static.hf.space, not inside huggingface.co.", true);
     }
     setBusy(false);
   };

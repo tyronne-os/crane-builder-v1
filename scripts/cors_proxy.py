@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 UPSTREAM = ('127.0.0.1', 11434)
 LISTEN = ('127.0.0.1', 11435)
-ALLOWED = ('https://aibruh-crane-builder-v1.hf.space', 'https://huggingface.co')
+ALLOWED = ('https://aibruh-crane-builder-v1.static.hf.space', 'https://aibruh-crane-builder-v1.hf.space', 'https://huggingface.co')
 
 
 class Handler(BaseHTTPRequestHandler):

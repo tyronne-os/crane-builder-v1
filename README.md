@@ -52,5 +52,5 @@ The chat calls an OpenAI-compatible endpoint from the browser. Default: `http://
 
 1. Keep your tunnel to the VM open so Ollama is reachable at `localhost:11434` on your PC.
 2. On the same machine run `python3 scripts/cors_proxy.py` — it forwards `11435` to `11434` and adds the CORS headers browsers need. Only the Crane Builder origins are allowed.
-3. Open the Space directly at https://aibruh-crane-builder-v1.hf.space (not the embedded view on huggingface.co — browsers block local-network access from the embedded frame).
+3. Open the Space directly at https://aibruh-crane-builder-v1.static.hf.space (not the embedded view on huggingface.co — browsers block local-network access from the embedded frame).
 
