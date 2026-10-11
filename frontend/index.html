@@ -449,7 +449,18 @@ const CFG = (() => {
   return { base: (q.get('api') || 'http://localhost:11435/v1').replace(/\/+$/, ''), model: q.get('model') || 'qwen2.5' };
 })();
 
-function Msg({ who, via, text, steps }) {
+const SYSTEM = `You are Beryl, the build agent inside Crane Builder, made by Beryl Labs. You run on the qwen2.5 model on the user's own GPU server (berylize-node); say so if asked which model you are. Be concise and direct.
+
+You can change this page's design live. When the user asks for a visual change, reply with one short sentence, then ONE fenced css block containing the rules; the page applies it instantly (use !important when overriding existing rules). If the user asks for new behavior or a feature that CSS cannot do, reply with one short sentence and ONE fenced js block (plain browser JavaScript, no imports, runs once; it may create elements and append them to document.body); the user clicks Run to apply it. Put nothing but code inside fences. If no UI change is requested, just answer normally.
+
+Page structure: .app > header.header (.logo > .logo-c .logo-rane .logo-tag, .divider-v, .btn-project, .btn-new, .header-spacer, .tab-group > .tab, .status-pill > .status-dot, .btn-ship) and .body-grid with three columns. Left: aside.chat-sidebar (.messages > .msg.me/.msg.bot > .msg-meta .msg-bubble .msg-steps > .step; .composer-wrap > .composer > textarea + .composer-row > .tool-btn, .model-chip, .composer-spacer, .btn-mic, .btn-send). Center: main.main-panel (.url-bar > .url-text .live-badge; .preview-frame > .idle-state > .idle-icon .idle-title .idle-sub .idle-pulse, or .code-pane). Right: aside.agent-sidebar (.agent-card > img, .agent-card-overlay, .live-badge-pill, .voice-overlay > .agent-name .agent-role, .voice-canvas-wrap > .voice-canvas-label, canvas; .agent-controls > .ctrl-btn; .transcript-strip > .transcript-label).
+CSS variables on :root: --bg #09090b, --surface #111113, --surface2 #18181b, --border, --border-mid, --fg, --fg-2..--fg-5 (text greys), --gold #eeca50, --gold-dim #c6a23a, --gold-dark #6c4a08, --gold-grad, --gold-chrome, --green #34d399, --red #dc2626. Fonts: Geist (UI), Geist Mono (labels), Instrument Serif (accents).`;
+
+const PATCH_KEY = 'crane.patches';
+const loadPatches = () => { try { return JSON.parse(localStorage.getItem(PATCH_KEY) || '[]'); } catch (e) { return []; } };
+const runJs = (code) => { try { new Function(code)(); return null; } catch (e) { return e.message; } };
+
+function Msg({ who, via, text, steps, js, onRun }) {
   return (
     <div className={'msg ' + who}>
       <div className="msg-meta"><span>{who === 'me' ? 'YOU' : 'BERYL'}</span>{via ? <span>· {via}</span> : null}</div>
@@ -458,6 +469,9 @@ function Msg({ who, via, text, steps }) {
         <div className="msg-steps">
           {steps.map((s, i) => (<div className="step" key={i}><span style={{color:s[2]}}>{s[0]}</span><span style={{color:s[2]}}>{s[1]}</span></div>))}
         </div>
+      ) : null}
+      {js ? (
+        <button onClick={onRun} style={{ alignSelf: 'flex-start', marginTop: '6px', height: '28px', padding: '0 12px', borderRadius: '8px', border: '1px solid rgba(255,236,170,.5)', background: 'var(--gold-grad)', color: '#1a1204', font: "700 11px 'Geist',sans-serif", letterSpacing: '.08em', cursor: 'pointer' }}>RUN FEATURE CODE</button>
       ) : null}
     </div>
   );
@@ -502,6 +516,7 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [online, setOnline] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [patches, setPatches] = useState(loadPatches);
 
   useEffect(() => { const f = feedRef.current; f.scrollTop = f.scrollHeight; }, [msgs]);
 
@@ -510,6 +525,21 @@ function App() {
     .catch(() => setOnline(false));
   useEffect(() => { refreshModels(); }, []);
 
+  useEffect(() => {
+    let el = document.getElementById('beryl-patch');
+    if (!el) { el = document.createElement('style'); el.id = 'beryl-patch'; document.head.appendChild(el); }
+    el.textContent = patches.filter(p => p.kind === 'css').map(p => p.code).join('\n');
+    try { localStorage.setItem(PATCH_KEY, JSON.stringify(patches)); } catch (e) {}
+  }, [patches]);
+  useEffect(() => { patches.filter(p => p.kind === 'js').forEach(p => runJs(p.code)); }, []);
+
+  const runFeature = (i) => {
+    const code = msgs[i].js;
+    const err = runJs(code);
+    if (!err) setPatches(p => p.concat({ kind: 'js', code }));
+    setMsgs(ms => ms.map((x, j) => j === i ? { ...x, js: '', steps: (x.steps || []).concat([[err ? '✕' : '✓', err ? 'Error: ' + err : 'Feature code ran', err ? '#ef4444' : '#a1a1aa']]) } : x));
+  };
+
   const toggleMic = () => { const on = !micOn; setMicOn(on); setVoiceState(on ? 'listening' : 'muted'); };
   const toggleSpeaker = () => { const on = !speakerOn; setSpeakerOn(on); setVoiceState(on ? (micOn ? 'listening' : 'muted') : 'speaker-off'); };
   const endCall = () => { setMicOn(false); setSpeakerOn(true); setVoiceState('idle'); };
@@ -517,13 +547,28 @@ function App() {
   const sendMsg = async () => {
     const text = draft.trim();
     if (!text || busy) return;
-    const history = msgs.filter(m => !m.error).map(m => ({ role: m.who === 'me' ? 'user' : 'assistant', content: m.text })).concat({ role: 'user', content: text });
+    if (text.startsWith('/')) {
+      setDraft('');
+      const cmd = text.split(/\s+/)[0].toLowerCase();
+      let reply;
+      if (cmd === '/undo') {
+        if (patches.length) { setPatches(p => p.slice(0, -1)); reply = 'Reverted the last change. (If it was feature code, reload the page to fully clear it.)'; }
+        else reply = 'Nothing to undo.';
+      } else if (cmd === '/reset') { setPatches([]); reply = 'All design changes cleared. Reload the page to clear any feature code.'; }
+      else if (cmd === '/css') reply = patches.filter(p => p.kind === 'css').map(p => p.code).join('\n\n') || 'No style changes yet.';
+      else reply = 'Commands: /undo, /reset, /css';
+      setMsgs(m => m.concat({ text, who: 'me', via: 'TEXT' }, { text: reply, who: 'bot', via: '', local: true }));
+      return;
+    }
+    const history = msgs.filter(m => !m.error && !m.local && !(m.who === 'me' && m.text.startsWith('/')))
+      .map(m => ({ role: m.who === 'me' ? 'user' : 'assistant', content: m.raw || m.text }))
+      .concat({ role: 'user', content: text });
     setMsgs(m => m.concat({ text, who: 'me', via: micOn ? 'VOICE' : 'TEXT' }, { text: '…', who: 'bot', via: '' }));
     setDraft('');
     setBusy(true);
-    const setLast = (t, error) => setMsgs(m => { const c = m.slice(); c[c.length - 1] = { ...c[c.length - 1], text: t, error }; return c; });
+    const setLast = (t, error, extra) => setMsgs(m => { const c = m.slice(); c[c.length - 1] = { ...c[c.length - 1], text: t, error, ...extra }; return c; });
     try {
-      const res = await fetch(CFG.base + '/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model, messages: history, stream: true }) });
+      const res = await fetch(CFG.base + '/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model, temperature: 0.4, messages: [{ role: 'system', content: SYSTEM }].concat(history), stream: true }) });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const reader = res.body.getReader(), dec = new TextDecoder();
       let buf = '', out = '';
@@ -541,6 +586,16 @@ function App() {
         }
       }
       if (!out) setLast('(empty response)', true);
+      else {
+        const blocks = [...out.matchAll(/```(css|js|javascript)[^\n]*\n([\s\S]*?)```/gi)];
+        const css = blocks.filter(b => b[1].toLowerCase() === 'css').map(b => b[2].trim()).filter(Boolean);
+        const js = blocks.filter(b => b[1].toLowerCase() !== 'css').map(b => b[2].trim()).filter(Boolean).join('\n');
+        if (css.length) setPatches(p => p.concat(css.map(code => ({ kind: 'css', code }))));
+        if (css.length || js) {
+          const clean = out.replace(/```[\s\S]*?```/g, '').replace(/\n{3,}/g, '\n\n').trim() || 'Done.';
+          setLast(clean, false, { raw: out, js, steps: css.length ? [['✓', 'Applied ' + css.length + ' style change' + (css.length > 1 ? 's' : '') + ' — /undo to revert', '#a1a1aa']] : undefined });
+        }
+      }
       setOnline(true);
     } catch (e) {
       setOnline(false);
@@ -594,7 +649,7 @@ function App() {
           <div style={{flex:1,height:'1px',background:'var(--border)'}}></div>
         </div>
 
-        {msgs.map((m, i) => <Msg key={i} {...m} />)}
+        {msgs.map((m, i) => <Msg key={i} {...m} onRun={() => runFeature(i)} />)}
 
       </div>
 
