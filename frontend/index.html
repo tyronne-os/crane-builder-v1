@@ -1,3 +1,5 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Crane Builder</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500;600&family=Instrument+Serif:ital@1&display=swap">
 <style>
@@ -444,7 +446,7 @@ const VOICE_LABELS = { listening:'LISTENING', muted:'MUTED', speaking:'SPEAKING'
 
 const CFG = (() => {
   const q = new URLSearchParams(location.search);
-  return { base: (q.get('api') || 'http://localhost:11434/v1').replace(/\/+$/, ''), model: q.get('model') || 'qwen2.5' };
+  return { base: (q.get('api') || 'http://localhost:11435/v1').replace(/\/+$/, ''), model: q.get('model') || 'qwen2.5' };
 })();
 
 function Msg({ who, via, text, steps }) {
@@ -542,7 +544,7 @@ function App() {
       setOnline(true);
     } catch (e) {
       setOnline(false);
-      setLast("Couldn't reach " + CFG.base + " (" + e.message + "). Check that the tunnel is running and that Ollama allows this site's origin (OLLAMA_ORIGINS).", true);
+      setLast("Couldn't reach " + CFG.base + " (" + e.message + "). Start the local proxy (scripts/cors_proxy.py) and make sure the tunnel to the GPU VM is up. Open this page at https://aibruh-crane-builder-v1.hf.space, not inside huggingface.co.", true);
     }
     setBusy(false);
   };
