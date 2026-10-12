@@ -77,8 +77,8 @@ if [ "$MODE" = face ] || [ "$MODE" = all ] || [ "$MODE" = bench ]; then
   # prebuilt wheel for torch 2.7 / CUDA 12 / python 3.10 (no compiler needed); build from source only if that is unavailable
   FA=https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.0.post2/flash_attn-2.8.0.post2+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
   .venv/bin/pip install -q "$FA" || { apt-get install -y -qq g++ && MAX_JOBS=4 .venv/bin/pip install -q flash_attn==2.8.0.post2 --no-build-isolation; }
-  .venv/bin/huggingface-cli download Soul-AILab/SoulX-FlashHead-1_3B --local-dir models/SoulX-FlashHead-1_3B
-  .venv/bin/huggingface-cli download facebook/wav2vec2-base-960h --local-dir models/wav2vec2-base-960h
+  .venv/bin/hf download Soul-AILab/SoulX-FlashHead-1_3B --local-dir models/SoulX-FlashHead-1_3B
+  .venv/bin/hf download facebook/wav2vec2-base-960h --local-dir models/wav2vec2-base-960h
   cd "$DIR"
   if [ "$MODE" != bench ]; then
     service beryl-face "$DIR/SoulX-FlashHead" "$DIR/SoulX-FlashHead/.venv/bin/python $DIR/beryl_face_server.py" \
