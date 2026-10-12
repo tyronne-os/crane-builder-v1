@@ -615,7 +615,7 @@ const VoiceOut = (() => {
   // Without a user gesture Chrome keeps audio suspended; wait for the first click/key instead of hanging.
   const running = () => ctx.state === 'running' ? Promise.resolve() : Promise.race([ctx.resume(), new Promise(r => setTimeout(r, 300))]).then(() => ctx.state === 'running' ? null :
     new Promise(res => { const go = () => { ctx.resume().then(res); removeEventListener('pointerdown', go); removeEventListener('keydown', go); }; addEventListener('pointerdown', go); addEventListener('keydown', go); }));
-  const post = (url, body) => fetch(url.replace(/\/+$/, '') + '/audio/speech', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const post = (url, body) => fetch(url.replace(/\/+$/, '') + '/audio/speech', { method: 'POST', headers: { 'Content-Type': 'application/json', ...tunnelHdr(url) }, body: JSON.stringify(body) })
     .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); });
   const synth = async (text, S, fx) => {
     const kokoro = { model: 'kokoro', voice: S.voiceEngine === 'kokoro' ? S.voice : 'af_heart', input: text, speed: S.voiceSpeed, voice2: fx.blend || '', mix: fx.mix || 0 };
@@ -666,6 +666,8 @@ const VoiceOut = (() => {
   };
 })();
 
+// ngrok's free tier answers browser fetches with a warning page (no CORS headers) unless this header is sent.
+const tunnelHdr = (url) => /ngrok/i.test(url) ? { 'ngrok-skip-browser-warning': '1' } : {};
 const MicLink = (() => {
   let ws = null, stream = null, ctx = null, node = null, want = false, retry = null;
   const WORKLET = 'class P extends AudioWorkletProcessor{constructor(){super();this.b=[]}process(i){const c=i[0]&&i[0][0];if(c){for(let k=0;k<c.length;k++)this.b.push(c[k]);if(this.b.length>=1600){const o=new Int16Array(this.b.length);for(let k=0;k<o.length;k++){const s=Math.max(-1,Math.min(1,this.b[k]));o[k]=s*32767}this.port.postMessage(o.buffer,[o.buffer]);this.b=[]}}return true}}registerProcessor("pcm16k",P)';
@@ -997,7 +999,7 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
             <Field label="Let me interrupt her" hint="Talking over her stops her mid-sentence. Headphones work best.">{tog('bargeIn')}</Field>
             <Field label="Speak replies to typed messages">{tog('autoSpeak')}</Field>
             <Field label="Web research" hint="Google, HF papers/spaces/models, GitHub, NVIDIA">{tog('webResearch')}</Field>
-            <Field label="Beryl GPU server" hint="Qwen3-ASR listening + Qwen3-TTS voice (scripts/beryl_gpu_server.py, port 8882 via the tunnel)">{inp('berylUrl')}</Field>
+            <Field label="Beryl GPU server" hint="Qwen3-ASR listening + Qwen3-TTS voice + brain. Paste the URL your Kaggle notebook prints (https://…ngrok…/k/<secret>/v1); local default is http://127.0.0.1:8882/v1">{inp('berylUrl')}</Field>
             <Field label="Listening language" hint="Qwen3-ASR on your GPU">{sel('listenLang', [['English', 'English'], ['auto', 'Auto-detect'], ['Spanish', 'Spanish'], ['French', 'French'], ['German', 'German'], ['Portuguese', 'Portuguese'], ['Japanese', 'Japanese'], ['Chinese', 'Chinese']])}</Field>
             <Field label={'Conversation warmth · ' + s.voiceTemp} hint="Sampling temperature for spoken replies; build replies keep the global one"><input type="range" min="0.3" max="1.2" step="0.05" value={s.voiceTemp} onChange={e => set('voiceTemp', Number(e.target.value))} /></Field>
             <Field label="Kokoro server (this PC)" hint="Started by the desktop icon">{inp('ttsUrl')}</Field>
@@ -1229,7 +1231,7 @@ function App() {
 
   useEffect(() => { const f = feedRef.current; f.scrollTop = f.scrollHeight; }, [msgs]);
 
-  const refreshModels = () => fetch(S.gpuBase.replace(/\/+$/, '') + '/models').then(r => r.json())
+  const refreshModels = () => fetch(S.gpuBase.replace(/\/+$/, '') + '/models', { headers: tunnelHdr(S.gpuBase) }).then(r => r.json())
     .then(j => { const ids = (j.data || []).map(m => m.id); setOnline(true); setModels(ids); setModel(cur => (S.defaultModel && ids.includes(S.defaultModel) && cur === CFG.model) ? S.defaultModel : cur); })
     .catch(() => { setOnline(false); setModels([]); });
   useEffect(() => { refreshModels(); }, [S.gpuBase]);
@@ -1419,7 +1421,7 @@ function App() {
       if (spoken) cutRef.current = '';
       const temp = prof.temperature !== undefined && prof.temperature !== '' ? Number(prof.temperature) : spoken ? S.voiceTemp : S.temperature;
       const hf = HF_CHAT_MODELS.find(h => h.id === model);
-      const call = (base, id, auth) => fetch(base.replace(/\/+$/, '') + '/chat/completions', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, auth && hfToken ? { Authorization: 'Bearer ' + hfToken } : {}), body: JSON.stringify({ model: id, temperature: temp, max_tokens: S.maxTokens, messages: [{ role: 'system', content: sys }].concat(history), stream: S.stream }), signal: ac.signal });
+      const call = (base, id, auth) => fetch(base.replace(/\/+$/, '') + '/chat/completions', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, tunnelHdr(base), auth && hfToken ? { Authorization: 'Bearer ' + hfToken } : {}), body: JSON.stringify({ model: id, temperature: temp, max_tokens: S.maxTokens, messages: [{ role: 'system', content: sys }].concat(history), stream: S.stream }), signal: ac.signal });
       let res;
       if (hf) {
         res = hfToken ? await call(hf.base, hf.id, true).catch(() => null) : null;

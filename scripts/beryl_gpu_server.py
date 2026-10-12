@@ -2,6 +2,9 @@
 
 GET  /health
 POST /v1/audio/speech   {"input": "...", "model": "qwen3tts", "voice": "beryl"}  -> audio/wav
+POST /v1/chat/completions, GET /v1/models   passed through to Ollama (the brain) at OLLAMA_URL
+Set BERYL_TOKEN (any long random string) before exposing this through a tunnel: every route is then served only under
+/k/<token>/v1/..., so one URL carries its own secret (put https://host/k/<token>/v1 in the builder; wss for listening).
 WS   /v1/listen         browser sends {"type":"config","lang":"English"} then 16 kHz mono PCM16 frames;
                         server replies {"type":"partial","text"} while you talk and {"type":"final","text"} when you stop.
 
@@ -10,17 +13,20 @@ then every reply clones that clip with Qwen3-TTS-Base so her voice never drifts.
 
 Run on the GPU machine:  python beryl_gpu_server.py   (listens on 127.0.0.1:8882; reach it through the SSH tunnel)
 """
-import asyncio, hashlib, io, json, os, threading
+import asyncio, hashlib, hmac, io, json, os, threading
 
 import numpy as np
 import soundfile as sf
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+import httpx
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 PORT = int(os.environ.get("BERYL_PORT", "8882"))
 DEVICE = os.environ.get("BERYL_DEVICE", "cuda:0")
+TOKEN = os.environ.get("BERYL_TOKEN", "")
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/v1").rstrip("/")
 HERE = os.path.dirname(os.path.abspath(__file__))
 ASR_MODEL = os.environ.get("BERYL_ASR_MODEL", "Qwen/Qwen3-ASR-1.7B")
 TTS_MODEL = os.environ.get("BERYL_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
@@ -92,7 +98,9 @@ class Segmenter:
 
 def _dtype():
     import torch
-    return torch.bfloat16 if DEVICE.startswith("cuda") else torch.float32
+    if not DEVICE.startswith("cuda"):
+        return torch.float32
+    return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16  # T4 (Turing) has no bf16
 
 
 class Models:
@@ -139,8 +147,9 @@ class Models:
         return wavs[0], sr
 
 
-def make_app(models=None):
+def make_app(models=None, token=None):
     models = models or Models()
+    token = TOKEN if token is None else token
     app = FastAPI()
     app.add_middleware(CORSMiddleware, allow_origins=ORIGINS, allow_methods=["GET", "POST", "OPTIONS"], allow_headers=["*"])
 
@@ -150,13 +159,21 @@ def make_app(models=None):
         resp.headers["Access-Control-Allow-Private-Network"] = "true"
         return resp
 
-    @app.get("/health")
-    def health():
+    def allowed(tok):
+        # With a token set, only /k/<token>/... works; wrong or missing token looks like a missing page.
+        return hmac.compare_digest(tok.encode(), token.encode()) if token else tok == ""
+
+    def guard(tok):
+        if not allowed(tok):
+            raise HTTPException(404, "Not Found")
+
+    async def health(tok: str = ""):
+        guard(tok)
         return {"ok": True, "asr": ASR_MODEL, "tts": TTS_MODEL,
                 "voice_ready": os.path.exists(os.path.join(VOICE_DIR, f"beryl-{VOICE_KEY}.wav"))}
 
-    @app.post("/v1/audio/speech")
-    async def speech(req: Speech):
+    async def speech(req: Speech, tok: str = ""):
+        guard(tok)
         text = req.input.strip()[:2000]
         if not text:
             raise HTTPException(400, "empty input")
@@ -165,9 +182,36 @@ def make_app(models=None):
         sf.write(buf, np.asarray(audio, dtype=np.float32), sr, format="WAV", subtype="PCM_16")
         return Response(buf.getvalue(), media_type="audio/wav")
 
-    @app.websocket("/v1/listen")
-    async def listen(ws: WebSocket):
-        if ws.headers.get("origin") not in ORIGINS:
+    async def llm_models(tok: str = ""):
+        guard(tok)
+        async with httpx.AsyncClient(timeout=15) as c:
+            try:
+                r = await c.get(OLLAMA_URL + "/models")
+            except httpx.HTTPError:
+                raise HTTPException(502, "brain (Ollama) is not running")
+        return JSONResponse(r.json(), status_code=r.status_code)
+
+    async def llm_chat(request: Request, tok: str = ""):
+        guard(tok)
+        body = await request.body()
+        try:
+            wants_stream = bool(json.loads(body).get("stream"))
+        except ValueError:
+            raise HTTPException(400, "bad JSON")
+
+        async def pipe():
+            async with httpx.AsyncClient(timeout=None) as c:
+                try:
+                    async with c.stream("POST", OLLAMA_URL + "/chat/completions", content=body,
+                                        headers={"Content-Type": "application/json"}) as r:
+                        async for chunk in r.aiter_raw():
+                            yield chunk
+                except httpx.HTTPError as e:
+                    yield json.dumps({"error": {"message": "brain (Ollama) is not running: " + str(e)}}).encode()
+        return StreamingResponse(pipe(), media_type="text/event-stream" if wants_stream else "application/json")
+
+    async def listen(ws: WebSocket, tok: str = ""):
+        if ws.headers.get("origin") not in ORIGINS or not allowed(tok):
             await ws.close(code=1008)
             return
         await ws.accept()
@@ -196,6 +240,12 @@ def make_app(models=None):
         except WebSocketDisconnect:
             pass
 
+    for prefix in ("", "/k/{tok}"):
+        app.add_api_route(prefix + "/health", health, methods=["GET"])
+        app.add_api_route(prefix + "/v1/audio/speech", speech, methods=["POST"])
+        app.add_api_route(prefix + "/v1/models", llm_models, methods=["GET"])
+        app.add_api_route(prefix + "/v1/chat/completions", llm_chat, methods=["POST"])
+        app.add_api_websocket_route(prefix + "/v1/listen", listen)
     return app
 
 
