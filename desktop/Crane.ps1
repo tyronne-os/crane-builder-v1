@@ -13,6 +13,11 @@ if (-not $listening) {
     for ($i = 0; $i -lt 20 -and -not (Test-Path "$env:USERPROFILE\.crane\token.txt"); $i++) { Start-Sleep -Milliseconds 250 }
   }
 }
+if (-not (Get-NetTCPConnection -LocalPort 8880 -State Listen) -and (Test-Path "$Dir\voice_server.py")) {
+  $py = (Get-Command pyw).Source
+  if (-not $py) { $py = (Get-Command pythonw).Source }
+  if ($py) { Start-Process -FilePath $py -ArgumentList "`"$Dir\voice_server.py`"" -WindowStyle Hidden }
+}
 if (Test-Path "$env:USERPROFILE\.crane\token.txt") { $Token = (Get-Content "$env:USERPROFILE\.crane\token.txt" -Raw).Trim() }
 if ($Token) { $Url = "$Url#cu=$Token" }
 
@@ -24,5 +29,6 @@ $browsers = @(
   "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
 )
 $browser = $browsers | Where-Object { Test-Path $_ } | Select-Object -First 1
-if ($browser) { Start-Process -FilePath $browser -ArgumentList "--app=$Url", '--start-maximized' }
+# Own profile so the autoplay flag applies even when Chrome is already open; lets her greet you on launch.
+if ($browser) { Start-Process -FilePath $browser -ArgumentList "--app=$Url", '--start-maximized', "--user-data-dir=`"$Dir\app-profile`"", '--autoplay-policy=no-user-gesture-required' }
 else { Start-Process $Url }
