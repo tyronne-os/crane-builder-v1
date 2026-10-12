@@ -1130,10 +1130,7 @@ function App() {
     }
   };
 
-  // auto-save current project whenever msgs or patches change
-  useEffect(() => {
-    if (activeProjectId) saveCurrentProject(activeProjectId, msgs, patches, S.projectName);
-  }, [msgs, patches]);
+
   const [adminOpen, setAdminOpen] = useState(false);
   const [projOpen, setProjOpen] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState(getActiveId);
@@ -1150,6 +1147,11 @@ function App() {
   const [online, setOnline] = useState(null);
   const [busy, setBusy] = useState(false);
   const [patches, setPatches] = useState(loadPatches);
+  useEffect(() => {
+    let id = activeProjectId;
+    if (!id) { id = uid(); setActiveProjectId(id); setActiveId(id); }
+    saveCurrentProject(id, msgs, patches, S.projectName);
+  }, [msgs, patches]);
   const [centerMode, setCenterMode] = useState(() => loadSettings().defaultMode);
   const [imgPrompt, setImgPrompt] = useState('');
   const [vidPrompt, setVidPrompt] = useState('');
