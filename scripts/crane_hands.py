@@ -4,7 +4,7 @@ Listens on 127.0.0.1:8765 only, requires the token in %USERPROFILE%\\.crane\\tok
 and only answers pages served from the Crane origins below.
 Move the mouse into any screen corner to abort a running action (pyautogui failsafe).
 """
-import base64, io, json, os, secrets, sys, time, webbrowser
+import base64, io, json, os, secrets, subprocess, sys, time, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -37,9 +37,20 @@ def screenshot_b64(max_w=1280):
     return base64.b64encode(buf.getvalue()).decode()
 
 
+CHROME_PATHS = [
+    os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+    os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+    os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+]
+
+
 def do_open(target):
     if target.startswith(("http://", "https://")):
-        webbrowser.open(target)
+        chrome = next((p for p in CHROME_PATHS if os.path.isfile(p)), None)
+        if chrome:
+            subprocess.Popen([chrome, target])
+        else:
+            webbrowser.open(target)
     elif os.name == "nt":
         os.startfile(target)
     else:

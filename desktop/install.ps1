@@ -10,12 +10,13 @@ Write-Host 'Downloading Crane files...'
 Invoke-WebRequest "$Raw/desktop/Crane.ps1"      -OutFile "$Dir\Crane.ps1"
 Invoke-WebRequest "$Raw/desktop/crane.ico"      -OutFile "$Dir\crane.ico"
 Invoke-WebRequest "$Raw/scripts/crane_hands.py" -OutFile "$Dir\crane_hands.py"
+Invoke-WebRequest "$Raw/scripts/voice_server.py" -OutFile "$Dir\voice_server.py"
 
 $py = (Get-Command py -ErrorAction SilentlyContinue).Source
 if (-not $py) { $py = (Get-Command python -ErrorAction SilentlyContinue).Source }
 if ($py) {
-  Write-Host 'Installing computer-use dependencies (pyautogui, pillow)...'
-  & $py -m pip install --user --quiet --upgrade pyautogui pillow
+  Write-Host 'Installing computer-use and voice dependencies (pyautogui, pillow, kokoro)...'
+  & $py -m pip install --user --quiet --upgrade pyautogui pillow kokoro soundfile fastapi uvicorn
 } else {
   Write-Warning 'Windows Python not found. Crane will open, but computer use needs Python: winget install Python.Python.3.12  then re-run this installer.'
 }
