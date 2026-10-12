@@ -71,6 +71,22 @@ check('health without token is hidden (404)', status('http://127.0.0.1:8882/heal
 check('health with wrong token is hidden (404)', status('http://127.0.0.1:8882/k/nope/health') == 404)
 check('health with the token works', status(f'http://127.0.0.1:8882/k/{TOKEN}/health') == 200)
 check('brain model list passes through with the token', json.load(urllib.request.urlopen(f'http://127.0.0.1:8882/k/{TOKEN}/v1/models'))['data'][0]['id'] == 'fake-qwen')
+import asyncio, websockets
+async def ws_result(path):
+    try:
+        async with websockets.connect('ws://127.0.0.1:8882' + path, origin='http://localhost:8000') as w:
+            await w.send(json.dumps({'type': 'config', 'lang': 'English'}))
+            await asyncio.wait_for(w.recv(), 2)
+            return 'open'
+    except websockets.ConnectionClosed as e:
+        return 'refused'
+    except asyncio.TimeoutError:
+        return 'open'
+    except Exception:
+        return 'refused'
+check('listen socket refused with a wrong token', asyncio.run(ws_result('/k/nope/v1/listen')) == 'refused')
+check('listen socket refused without a token', asyncio.run(ws_result('/v1/listen')) == 'refused')
+check('listen socket accepted with the token', asyncio.run(ws_result(f'/k/{TOKEN}/v1/listen')) == 'open')
 check('brain model list is hidden without the token', status('http://127.0.0.1:8882/v1/models') == 404)
 
 BASE = f'http://127.0.0.1:8882/k/{TOKEN}/v1'
@@ -112,9 +128,10 @@ with sync_playwright() as p:
     check('offline worker is reported (no Chrome fallback)', 'offline' in st)
     check('no page errors when offline', not errs2)
 
+    pg.close(); pg2.close()
     pg3, _ = page(seed.replace(TOKEN, 'wrong-token'))
-    n = len(calls['transcribe']); pg3.goto('http://localhost:8000/app.html'); pg3.wait_for_timeout(6000)
-    check('wrong token: listening is refused', len(calls['transcribe']) == n)
+    n = len(calls['transcribe']); pg3.goto('http://localhost:8000/app.html'); pg3.wait_for_timeout(7000)
+    check('wrong token in the browser: listening is refused', len(calls['transcribe']) == n)
     b.close()
 web.kill()
 print('ALL PASS' if ok else 'SOME FAILED'); sys.exit(0 if ok else 1)
