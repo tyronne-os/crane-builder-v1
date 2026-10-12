@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Run on the GPU machine (rented RTX 5090/4090 on RunPod or Vast, or berylize-node). Ubuntu + NVIDIA driver assumed.
-#   bash setup_beryl_gpu.sh            install Qwen3-ASR + Qwen3-TTS server and start it on 127.0.0.1:8882
-#   bash setup_beryl_gpu.sh bench      also run the Phase 0 SoulX-FlashHead Lite speed test on Beryl's photo
+# Run on your GPU machine (berylize-node on Google Cloud, or any Ubuntu box with an NVIDIA driver).
+#   bash setup_beryl_gpu.sh            install the worker (Qwen3-ASR ears + Qwen3-TTS voice) as a service that starts at boot
+#   PROFILE=lean bash setup_beryl_gpu.sh   same, with the 0.6B ears and voice so everything fits a 24 GB card (L4)
 #   bash setup_beryl_gpu.sh brain      also install Ollama with the Qwen3.5 brain (OLLAMA_MODEL to override)
-# From your PC, tunnel the ports (replace host/port with your machine's SSH details):
-#   ssh -N -L 8882:localhost:8882 -L 11434:localhost:11434 root@HOST -p PORT
+#   bash setup_beryl_gpu.sh bench      also run the Phase 0 SoulX-FlashHead Lite speed test on Beryl's photo
+# The service loads every model at boot, so there is no start-up lag once /health says ready.
+# One tunnel from your PC carries listening, voice and the brain (the worker passes the brain through to Ollama):
+#   gcloud compute ssh berylize-node --zone us-east1-c --project posh-eden -- -N -L 8882:localhost:8882
+# then in the builder set both "Beryl GPU server" and the model endpoint to http://127.0.0.1:8882/v1
 set -euo pipefail
 DIR=${BERYL_HOME:-/opt/beryl}
 RAW=https://raw.githubusercontent.com/tyronne-os/crane-builder-v1/main
@@ -20,8 +23,31 @@ curl -fsSL "$RAW/scripts/beryl_gpu_server.py" -o beryl_gpu_server.py
 .venv/bin/pip install -q --no-deps qwen-tts && .venv/bin/pip install -q onnxruntime einops sox
 .venv/bin/pip install -q flash-attn --no-build-isolation || echo "flash-attn skipped (optional, saves memory)"
 pkill -f beryl_gpu_server.py || true
-nohup .venv/bin/python beryl_gpu_server.py > beryl.log 2>&1 &
-echo "Beryl server starting on 127.0.0.1:8882 (first request downloads the models and designs her voice). Log: $DIR/beryl.log"
+PROFILE=${PROFILE:-full}
+if command -v systemctl >/dev/null && [ -d /run/systemd/system ]; then
+  cat > /etc/systemd/system/beryl.service <<UNIT
+[Unit]
+Description=Beryl worker (Qwen3-ASR + Qwen3-TTS)
+After=network-online.target
+
+[Service]
+WorkingDirectory=$DIR
+Environment=BERYL_PROFILE=$PROFILE
+Environment=HF_HOME=$DIR/hf
+ExecStart=$DIR/.venv/bin/python $DIR/beryl_gpu_server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload && systemctl enable --now beryl.service
+  echo "Installed as the beryl service (starts at boot). Log: journalctl -u beryl -f"
+else
+  BERYL_PROFILE=$PROFILE HF_HOME="$DIR/hf" nohup .venv/bin/python beryl_gpu_server.py > beryl.log 2>&1 &
+  echo "No systemd here; started in the background. Log: $DIR/beryl.log"
+fi
+echo "Models download once, then load at every start. Wait for: curl -s localhost:8882/health  ->  \"ready\": true"
 
 if [ "${1:-}" = "brain" ]; then
   command -v ollama >/dev/null || curl -fsSL https://ollama.com/install.sh | sh

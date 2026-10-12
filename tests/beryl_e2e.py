@@ -70,6 +70,8 @@ def status(url):
 check('health without token is hidden (404)', status('http://127.0.0.1:8882/health') == 404)
 check('health with wrong token is hidden (404)', status('http://127.0.0.1:8882/k/nope/health') == 404)
 check('health with the token works', status(f'http://127.0.0.1:8882/k/{TOKEN}/health') == 200)
+h = json.load(urllib.request.urlopen(f'http://127.0.0.1:8882/k/{TOKEN}/health'))
+check('health reports ready with ears and voice flags', h.get('ready') is True and 'ears_ready' in h and 'voice_ready' in h)
 check('brain model list passes through with the token', json.load(urllib.request.urlopen(f'http://127.0.0.1:8882/k/{TOKEN}/v1/models'))['data'][0]['id'] == 'fake-qwen')
 import asyncio, websockets
 async def ws_result(path):

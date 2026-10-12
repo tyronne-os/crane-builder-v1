@@ -28,8 +28,10 @@ DEVICE = os.environ.get("BERYL_DEVICE", "cuda:0")
 TOKEN = os.environ.get("BERYL_TOKEN", "")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/v1").rstrip("/")
 HERE = os.path.dirname(os.path.abspath(__file__))
-ASR_MODEL = os.environ.get("BERYL_ASR_MODEL", "Qwen/Qwen3-ASR-1.7B")
-TTS_MODEL = os.environ.get("BERYL_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
+# BERYL_PROFILE=lean uses the 0.6B ears and voice (about 3 GB less) so everything fits a 24 GB card next to the brain and face.
+LEAN = os.environ.get("BERYL_PROFILE", "full") == "lean"
+ASR_MODEL = os.environ.get("BERYL_ASR_MODEL", "Qwen/Qwen3-ASR-0.6B" if LEAN else "Qwen/Qwen3-ASR-1.7B")
+TTS_MODEL = os.environ.get("BERYL_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-0.6B-Base" if LEAN else "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
 DESIGN_MODEL = os.environ.get("BERYL_DESIGN_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign")
 VOICE_DIR = os.environ.get("BERYL_VOICE_DIR", os.path.join(HERE, "voices"))
 # Voice design brief. Qwen3-TTS-VoiceDesign reads attributes best: who, timbre, pitch, mic distance, pace, emotion, what to avoid.
@@ -104,19 +106,31 @@ def _dtype():
 
 
 class Models:
-    """Loads each model on first use and keeps it on the GPU."""
+    """Loads each model once and keeps it on the GPU. warm() does all of it at boot so the first sentence is not slow."""
 
     def __init__(self):
         self.lock = threading.Lock()
         self.asr = self.tts = self.prompt = None
+        self.ready = {"ears": False, "voice": False}
+        self.error = ""
+
+    def _load_asr(self):
+        if self.asr is None:
+            import torch
+            from qwen_asr import Qwen3ASRModel
+            self.asr = Qwen3ASRModel.from_pretrained(ASR_MODEL, dtype=_dtype(), device_map=DEVICE,
+                                                     max_inference_batch_size=4, max_new_tokens=256)
+
+    def _load_tts(self):
+        if self.tts is None:
+            from qwen_tts import Qwen3TTSModel
+            self.tts = Qwen3TTSModel.from_pretrained(TTS_MODEL, device_map=DEVICE, dtype=_dtype())
+        if self.prompt is None:
+            self.prompt = self._voice()
 
     def transcribe(self, audio, lang):
-        import torch
-        from qwen_asr import Qwen3ASRModel
         with self.lock:
-            if self.asr is None:
-                self.asr = Qwen3ASRModel.from_pretrained(ASR_MODEL, dtype=_dtype(), device_map=DEVICE,
-                                                         max_inference_batch_size=4, max_new_tokens=256)
+            self._load_asr()
             r = self.asr.transcribe(audio=(audio, SR), language=lang or None)
         return r[0].text.strip()
 
@@ -136,15 +150,20 @@ class Models:
         return self.tts.create_voice_clone_prompt(ref_audio=wav, ref_text=open(txt).read().strip())
 
     def speak(self, text):
-        import torch
-        from qwen_tts import Qwen3TTSModel
         with self.lock:
-            if self.tts is None:
-                self.tts = Qwen3TTSModel.from_pretrained(TTS_MODEL, device_map=DEVICE, dtype=_dtype())
-            if self.prompt is None:
-                self.prompt = self._voice()
+            self._load_tts()
             wavs, sr = self.tts.generate_voice_clone(text=text, language="English", voice_clone_prompt=self.prompt)
         return wavs[0], sr
+
+    def warm(self):
+        """Load everything and run one throwaway sentence and one throwaway listen, so kernels are compiled and cached."""
+        try:
+            self.transcribe(np.zeros(SR, np.float32), "English")
+            self.ready["ears"] = True
+            self.speak("Okay.")
+            self.ready["voice"] = True
+        except Exception as e:  # surfaced through /health instead of dying silently
+            self.error = f"{type(e).__name__}: {e}"
 
 
 def make_app(models=None, token=None):
@@ -169,8 +188,9 @@ def make_app(models=None, token=None):
 
     async def health(tok: str = ""):
         guard(tok)
-        return {"ok": True, "asr": ASR_MODEL, "tts": TTS_MODEL,
-                "voice_ready": os.path.exists(os.path.join(VOICE_DIR, f"beryl-{VOICE_KEY}.wav"))}
+        ready = getattr(models, "ready", {"ears": True, "voice": True})
+        return {"ok": True, "ready": all(ready.values()), "ears_ready": ready["ears"], "voice_ready": ready["voice"],
+                "error": getattr(models, "error", ""), "asr": ASR_MODEL, "tts": TTS_MODEL, "profile": "lean" if LEAN else "full"}
 
     async def speech(req: Speech, tok: str = ""):
         guard(tok)
@@ -240,6 +260,11 @@ def make_app(models=None, token=None):
         except WebSocketDisconnect:
             pass
 
+    if hasattr(models, "warm") and os.environ.get("BERYL_WARM", "1") != "0":
+        @app.on_event("startup")
+        async def warm_on_boot():
+            threading.Thread(target=models.warm, daemon=True).start()
+
     for prefix in ("", "/k/{tok}"):
         app.add_api_route(prefix + "/health", health, methods=["GET"])
         app.add_api_route(prefix + "/v1/audio/speech", speech, methods=["POST"])
@@ -251,5 +276,5 @@ def make_app(models=None, token=None):
 
 if __name__ == "__main__":
     import uvicorn
-    print(f"[beryl] http://127.0.0.1:{PORT}  (speech: /v1/audio/speech, listening: ws /v1/listen)")
+    print(f"[beryl] http://127.0.0.1:{PORT} profile={'lean' if LEAN else 'full'}  loading models now; /health says ready when done")
     uvicorn.run(make_app(), host="127.0.0.1", port=PORT, log_level="warning")
