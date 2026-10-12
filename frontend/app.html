@@ -596,7 +596,7 @@ const fxFor = (S) => ({ ...FX_DEFAULT, ...((S.voiceFx || {})[fxKey(S)] || FX_PRE
 // Beryl's live face: frames rendered by FlashHead on the GPU, relayed by the worker. Each sentence's frames are timed from
 // the moment its audio starts, so the canvas shows the frame that matches what is being heard. Silent: a cached idle loop.
 const AvatarLink = (() => {
-  let ws = null, base = '', want = false, retry = null, idle = [], cur = null;
+  let ws = null, base = '', want = false, retry = null, idle = [], cur = null, state = 'off';
   const utt = new Map();
   const wsUrl = (b) => b.replace(/^http/, 'ws').replace(/\/+$/, '') + '/avatar';
   const bitmap = (bytes) => createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }));
@@ -604,11 +604,15 @@ const AvatarLink = (() => {
   const wake = (u) => u.waiters.splice(0).forEach(r => r());
   const connect = () => {
     const pending = [];
-    ws = new WebSocket(wsUrl(base)); ws.binaryType = 'arraybuffer';
+    state = 'connecting to ' + wsUrl(base);
+    try { ws = new WebSocket(wsUrl(base)); } catch (e) { state = 'cannot open socket: ' + e.message; return; }
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => { state = 'connected, waiting for idle frames'; };
     ws.onmessage = async (e) => {
       if (typeof e.data === 'string') {
         const m = JSON.parse(e.data);
-        if (m.type === 'face' && m.ready) idle = (await Promise.all(pending)).filter(Boolean);
+        if (m.type === 'face' && m.ready) { idle = (await Promise.all(pending)).filter(Boolean); state = 'ready: ' + idle.length + ' idle frames'; }
+        else if (m.type === 'face') state = 'GPU face service not ready yet';
         return;
       }
       const dv = new DataView(e.data), kind = dv.getUint8(0), id = String(dv.getUint32(1)), len = dv.getUint32(5), t = dv.getFloat32(9);
@@ -617,11 +621,11 @@ const AvatarLink = (() => {
       else if (kind === 2) { const u = getU(id); bitmap(jpeg).then(b => { u.frames.push({ t, b }); if (u.frames.length > 1 && u.frames[u.frames.length - 2].t > t) u.frames.sort((x, y) => x.t - y.t); wake(u); }).catch(() => {}); }
       else if (kind === 3) { const u = getU(id); u.ended = true; wake(u); }
     };
-    ws.onclose = () => { ws = null; if (want) retry = setTimeout(connect, idle.length ? 3000 : 15000); };
+    ws.onclose = (e) => { ws = null; if (want && !idle.length) state = 'closed (code ' + e.code + (e.code === 1008 ? ': origin or token rejected' : e.code === 1006 ? ': tunnel down or blocked' : '') + ')'; if (want) retry = setTimeout(connect, idle.length ? 3000 : 15000); };
   };
   return {
     start(b) { if (want && b === base) return; this.close(); want = true; base = b; connect(); },
-    close() { want = false; clearTimeout(retry); if (ws) { try { ws.close(); } catch (e) {} ws = null; } idle = []; cur = null; utt.clear(); },
+    close() { want = false; state = 'off'; clearTimeout(retry); if (ws) { try { ws.close(); } catch (e) {} ws = null; } idle = []; cur = null; utt.clear(); },
     ready: () => !!(ws && ws.readyState === 1 && idle.length),
     // Hold the sentence's audio until its first frames exist (or give up after `ms`), so lips and voice start together.
     waitFirst(id, ms) { return new Promise(res => { const u = getU(id); if (u.frames.length || u.ended) return res(); u.waiters.push(res); setTimeout(res, ms); }); },
@@ -634,7 +638,7 @@ const AvatarLink = (() => {
       }
       return idle.length ? idle[Math.floor(wallNow * 25) % idle.length].b : null;
     },
-    stats: () => ({ idle: idle.length, playing: cur ? cur.id : null, utterances: utt.size }),
+    stats: () => ({ state, idle: idle.length, playing: cur ? cur.id : null, utterances: utt.size }),
   };
 })();
 
@@ -1065,7 +1069,7 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
             {s.voiceEngine === 'kokoro' && fx.blend && rng('Blend amount', 'mix', 0, 1, 0.05)}
             <Field label="Start talking when Crane opens" hint="She greets you and starts listening">{tog('liveGreet')}</Field>
             <Field label="Let me interrupt her" hint="Talking over her stops her mid-sentence. Headphones work best.">{tog('bargeIn')}</Field>
-            <Field label="Live face" hint="Her portrait talks, rendered by FlashHead on your GPU (needs the face service). Off: still photo.">{tog('avatarOn')}</Field>
+            <Field label="Live face" hint="Her portrait talks, rendered by FlashHead on your GPU (needs the face service). Off: still photo.">{tog('avatarOn')}<AvatarStatus /></Field>
             <Field label="Speak replies to typed messages">{tog('autoSpeak')}</Field>
             <Field label="Web research" hint="Google, HF papers/spaces/models, GitHub, NVIDIA">{tog('webResearch')}</Field>
             <Field label="Beryl GPU server" hint="Qwen3-ASR listening + Qwen3-TTS voice + brain. Paste the URL your Kaggle notebook prints (https://…ngrok…/k/<secret>/v1); local default is http://127.0.0.1:8882/v1">{inp('berylUrl')}</Field>
@@ -1133,6 +1137,12 @@ const INITIAL_MSGS = [];
 
 function CodePane() {
   return <pre className="code-pane"></pre>;
+}
+
+function AvatarStatus() {
+  const [st, setSt] = useState('');
+  useEffect(() => { const t = setInterval(() => setSt(AvatarLink.stats().state), 1000); return () => clearInterval(t); }, []);
+  return <div style={{ marginTop: 4, fontSize: 12, color: st.startsWith('ready') ? '#7bd88f' : '#eeca50' }}>Face link: {st}</div>;
 }
 
 function AvatarCanvas() {
