@@ -50,7 +50,7 @@ service() {  # name, workdir, command, extra Environment= lines
 # qwen-asr pins transformers==4.57.6 and qwen-tts pins 4.57.3; both run on 4.57.6, so qwen-tts goes in without its pin.
 .venv/bin/pip install -q qwen-asr fastapi "uvicorn[standard]" soundfile numpy httpx pillow
 .venv/bin/pip install -q --no-deps qwen-tts && .venv/bin/pip install -q onnxruntime einops sox
-.venv/bin/pip install -q wheel setuptools && .venv/bin/pip install -q flash-attn --no-build-isolation || echo "flash-attn skipped (optional, saves memory)"
+# (flash-attn is skipped for the worker: it needs a C++ compiler and the Qwen models run fine without it)
 service beryl "$DIR" "$DIR/.venv/bin/python $DIR/beryl_gpu_server.py" \
   "Environment=BERYL_PROFILE=$PROFILE\nEnvironment=HF_HOME=$DIR/hf\n"
 
@@ -73,7 +73,10 @@ if [ "$MODE" = face ] || [ "$MODE" = all ] || [ "$MODE" = bench ]; then
   # requirements.txt pins nvidia-nccl-cu12==2.27.3, which conflicts with torch 2.7.1's own nccl; that pin is for multi-GPU only.
   grep -v -i 'nvidia-nccl' requirements.txt > requirements.beryl.txt
   .venv/bin/pip install -q -r requirements.beryl.txt "huggingface_hub[cli]" fastapi "uvicorn[standard]" pillow
-  .venv/bin/pip install -q ninja && MAX_JOBS=4 .venv/bin/pip install -q flash_attn==2.8.0.post2 --no-build-isolation
+  .venv/bin/pip install -q wheel setuptools ninja
+  # prebuilt wheel for torch 2.7 / CUDA 12 / python 3.10 (no compiler needed); build from source only if that is unavailable
+  FA=https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.0.post2/flash_attn-2.8.0.post2+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+  .venv/bin/pip install -q "$FA" || { apt-get install -y -qq g++ && MAX_JOBS=4 .venv/bin/pip install -q flash_attn==2.8.0.post2 --no-build-isolation; }
   .venv/bin/huggingface-cli download Soul-AILab/SoulX-FlashHead-1_3B --local-dir models/SoulX-FlashHead-1_3B
   .venv/bin/huggingface-cli download facebook/wav2vec2-base-960h --local-dir models/wav2vec2-base-960h
   cd "$DIR"
