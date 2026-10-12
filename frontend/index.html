@@ -446,6 +446,42 @@ textarea::placeholder { color: var(--fg-5); }
 .diff-upload-btn:hover { border-color:rgba(238,202,80,.3); color:var(--fg-2); }
 .diff-ref-thumb { width:28px; height:28px; border-radius:4px; object-fit:cover; border:1px solid var(--border-mid); }
 
+/* ── admin panel ── */
+.btn-admin { width:34px; height:34px; border-radius:10px; display:grid; place-items:center; background:var(--surface); border:1px solid var(--border); color:var(--fg-4); flex-shrink:0; transition:color .15s,border-color .15s; }
+.btn-admin:hover { color:var(--gold); border-color:rgba(238,202,80,.35); }
+.adm-backdrop { position:fixed; inset:0; z-index:100; background:rgba(0,0,0,.6); backdrop-filter:blur(6px); display:grid; place-items:center; padding:24px; }
+.adm { width:min(1040px,100%); height:min(680px,100%); display:grid; grid-template-columns:230px minmax(0,1fr); background:var(--surface); border:1px solid var(--border-mid); border-radius:16px; overflow:hidden; box-shadow:0 30px 80px rgba(0,0,0,.6); }
+.adm-nav { display:flex; flex-direction:column; gap:2px; padding:16px 10px; background:var(--bg); border-right:1px solid var(--border); overflow-y:auto; }
+.adm-title { font:700 10px 'Geist Mono',monospace; letter-spacing:.2em; color:var(--gold); padding:0 10px 12px; }
+.adm-nav-item { display:flex; flex-direction:column; align-items:flex-start; gap:1px; padding:9px 10px; border-radius:9px; background:none; border:1px solid transparent; color:var(--fg-3); font:500 13px 'Geist',sans-serif; text-align:left; }
+.adm-nav-item small { font-size:10.5px; color:var(--fg-5); }
+.adm-nav-item:hover { background:var(--surface); }
+.adm-nav-item.active { background:rgba(238,202,80,.07); border-color:rgba(238,202,80,.2); color:var(--gold); }
+.adm-node { display:flex; align-items:center; gap:7px; padding:8px 10px; font:500 10px 'Geist Mono',monospace; color:var(--fg-5); }
+.adm-body { display:flex; flex-direction:column; overflow-y:auto; padding:22px 26px; }
+.adm-head { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px; }
+.adm-head h2 { font:600 20px 'Geist',sans-serif; color:var(--fg); }
+.adm-head p { font-size:12px; color:var(--fg-5); margin-top:3px; }
+.adm-close { width:30px; height:30px; border-radius:8px; background:var(--surface2); border:1px solid var(--border); color:var(--fg-4); }
+.adm-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:14px; }
+.adm-field { display:flex; flex-direction:column; gap:6px; padding:12px 14px; background:var(--bg); border:1px solid var(--border); border-radius:11px; }
+.adm-label { font:600 10px 'Geist',sans-serif; letter-spacing:.1em; text-transform:uppercase; color:var(--fg-4); }
+.adm-hint { font-size:10.5px; color:var(--fg-5); line-height:1.4; word-break:break-word; }
+.adm-input { width:100%; background:var(--surface2); border:1px solid var(--border-mid); border-radius:7px; padding:7px 9px; color:var(--fg); font:400 12px 'Geist Mono',monospace; outline:none; resize:vertical; }
+.adm-input:focus { border-color:rgba(238,202,80,.4); }
+.adm-field input[type=range] { accent-color:var(--gold); width:100%; }
+.adm-color { width:56px; height:30px; border:none; background:none; cursor:pointer; }
+.adm-toggle { width:38px; height:22px; border-radius:11px; background:var(--surface2); border:1px solid var(--border-mid); position:relative; transition:background .15s; }
+.adm-toggle span { position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:var(--fg-5); transition:transform .15s,background .15s; }
+.adm-toggle.on { background:rgba(238,202,80,.25); border-color:rgba(238,202,80,.5); }
+.adm-toggle.on span { transform:translateX(16px); background:var(--gold); }
+.adm-actions { grid-column:1/-1; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.adm-btn { height:32px; padding:0 14px; border-radius:8px; background:var(--surface2); border:1px solid var(--border-mid); color:var(--fg-2); font:600 11px 'Geist',sans-serif; letter-spacing:.04em; cursor:pointer; display:inline-flex; align-items:center; }
+.adm-btn.gold { background:var(--gold-grad); color:#1a1204; border-color:rgba(255,236,170,.5); }
+.adm-btn.danger { color:#fca5a5; border-color:rgba(220,38,38,.4); }
+.adm-list { grid-column:1/-1; font:400 11px 'Geist Mono',monospace; color:var(--fg-4); display:flex; flex-direction:column; gap:4px; }
+@media (max-width: 720px) { .adm { grid-template-columns:1fr; grid-template-rows:auto minmax(0,1fr); } .adm-nav { flex-direction:row; overflow-x:auto; } .adm-nav-item small, .adm-title, .adm-node { display:none; } }
+
 /* ── responsive ── */
 @media (max-width: 1100px) {
   .body-grid { grid-template-columns: clamp(260px,32vw,360px) minmax(0,1fr); }
@@ -499,6 +535,157 @@ const HF_DIFFUSION_MODELS = [
   { id: 'Lightricks/LTX-2.5',             label: 'LTX-2.5',                   tag: 'HF · video' },
 ];
 
+const VOICE_ENGINES = {
+  kokoro: { label: 'Kokoro-82M', size: '82M · 330 MB', path: '/opt/berylize/small-models/voice/kokoro-82m', voices: [
+    ['af_heart','Heart · US · warm (A)'], ['af_bella','Bella · US · bright (A-)'], ['af_nicole','Nicole · US · soft/ASMR'],
+    ['af_aoede','Aoede · US'], ['af_kore','Kore · US'], ['af_sarah','Sarah · US'], ['af_nova','Nova · US'], ['af_sky','Sky · US'],
+    ['af_alloy','Alloy · US'], ['af_jessica','Jessica · US'], ['af_river','River · US'],
+    ['bf_emma','Emma · UK'], ['bf_isabella','Isabella · UK'], ['bf_alice','Alice · UK'], ['bf_lily','Lily · UK'] ] },
+  kyutai: { label: 'Kyutai TTS-1.6B', size: '1.6B · en/fr', path: '/opt/berylize/small-models/voice/kyutai-tts-1.6b', voices: [
+    ['expresso/ex04-ex02_happy_001_channel1_118s.wav','Ex04 · happy'], ['expresso/ex04-ex02_calm_002_channel1_480s.wav','Ex04 · calm'],
+    ['expresso/ex04-ex01_narration_001_channel1_605s.wav','Ex04 · narration'], ['expresso/ex04-ex03_whisper_001_channel1_198s.wav','Ex04 · whisper'],
+    ['expresso/ex04-ex02_sarcastic_001_channel1_519s.wav','Ex04 · sarcastic'], ['expresso/ex03-ex02_narration_002_channel2_1136s.wav','Ex02 · narration'] ] },
+};
+
+const SETTINGS_KEY = 'crane.settings';
+const DEFAULT_SETTINGS = {
+  projectName: 'crane-it', defaultTab: 'preview', showStatus: true, shipTarget: 'hf',
+  apiBase: CFG.base, defaultModel: '', temperature: 0.4, maxTokens: 2048, stream: true, systemExtra: '', allowCss: true, allowJs: true,
+  defaultMode: 'builder', autoSwitch: true, imgApi: 'https://api-inference.huggingface.co/models/Qwen/Qwen-Image-2.1', vidApi: 'https://api-inference.huggingface.co/models/Lightricks/LTX-2.5', clipSeconds: 8, autoStitch: true,
+  agentName: 'Beryl', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'kokoro', voice: 'af_heart', voiceSpeed: 1.0, ttsUrl: 'http://localhost:8880/v1', autoSpeak: false, micMode: 'toggle',
+  nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU',
+  accent: '#eeca50', fontScale: 1, showAgent: true,
+};
+const loadSettings = () => { try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }; } catch (e) { return { ...DEFAULT_SETTINGS }; } };
+
+const ADMIN_SECTIONS = [
+  ['workspace', 'Workspace', 'Header, project & shipping'],
+  ['chat', 'Chat & Model', 'LLM endpoint, sampling, prompt'],
+  ['center', 'Preview & Diffusion', 'Builder, image & video'],
+  ['voice', 'Voice Agent', 'TTS engine & female voices'],
+  ['infra', 'GPU & Infrastructure', 'Node, region, connection'],
+  ['appearance', 'Appearance', 'Accent, scale, layout'],
+  ['data', 'Data & Reset', 'Export, import, clear'],
+];
+
+function Field({ label, hint, children }) {
+  return (<label className="adm-field"><span className="adm-label">{label}</span>{children}{hint ? <span className="adm-hint">{hint}</span> : null}</label>);
+}
+function Toggle({ on, onChange }) {
+  return <button type="button" className={'adm-toggle' + (on ? ' on' : '')} onClick={() => onChange(!on)}><span></span></button>;
+}
+
+function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onResetPatches }) {
+  const [sec, setSec] = useState('workspace');
+  const [voiceMsg, setVoiceMsg] = useState('');
+  const eng = VOICE_ENGINES[s.voiceEngine];
+  const inp = (k, type) => <input className="adm-input" type={type || 'text'} value={s[k]} onChange={e => set(k, type === 'number' ? Number(e.target.value) : e.target.value)} spellCheck={false} />;
+  const sel = (k, opts) => <select className="adm-input" value={s[k]} onChange={e => set(k, e.target.value)}>{opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>;
+  const tog = (k) => <Toggle on={s[k]} onChange={v => set(k, v)} />;
+
+  const testVoice = async () => {
+    setVoiceMsg('Synthesizing…');
+    try {
+      const r = await fetch(s.ttsUrl.replace(/\/+$/, '') + '/audio/speech', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: s.voiceEngine, voice: s.voice, speed: s.voiceSpeed, input: `Hi, I'm ${s.agentName}. This is how I sound.` }) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      new Audio(URL.createObjectURL(await r.blob())).play();
+      setVoiceMsg('Playing.');
+    } catch (e) { setVoiceMsg('No TTS server at ' + s.ttsUrl + ' (' + e.message + '). Models are on the GPU; the speech server is the next step.'); }
+  };
+
+  const exportCfg = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(s, null, 2)], { type: 'application/json' })); a.download = 'crane-settings.json'; a.click(); };
+  const importCfg = (e) => { const f = e.target.files[0]; if (!f) return; f.text().then(t => { try { const j = JSON.parse(t); Object.keys(j).forEach(k => k in DEFAULT_SETTINGS && set(k, j[k])); } catch (err) {} }); };
+
+  return (
+    <div className="adm-backdrop" onClick={onClose}>
+      <div className="adm" onClick={e => e.stopPropagation()}>
+        <nav className="adm-nav">
+          <div className="adm-title">ADMIN</div>
+          {ADMIN_SECTIONS.map(([id, name, sub]) => (
+            <button key={id} className={'adm-nav-item' + (sec === id ? ' active' : '')} onClick={() => setSec(id)}>
+              <span>{name}</span><small>{sub}</small>
+            </button>
+          ))}
+          <div style={{ flex: 1 }}></div>
+          <div className="adm-node"><span className="status-dot" style={online ? {} : { background: 'var(--fg-5)', animation: 'none' }}></span>{s.nodeName} · {online ? 'online' : 'offline'}</div>
+        </nav>
+        <section className="adm-body">
+          <div className="adm-head">
+            <div><h2>{ADMIN_SECTIONS.find(x => x[0] === sec)[1]}</h2><p>{ADMIN_SECTIONS.find(x => x[0] === sec)[2]}</p></div>
+            <button className="adm-close" onClick={onClose} title="Close">✕</button>
+          </div>
+
+          {sec === 'workspace' && (<div className="adm-grid">
+            <Field label="Project name" hint="Shown in the header project button">{inp('projectName')}</Field>
+            <Field label="Default tab">{sel('defaultTab', [['preview', 'Preview'], ['code', 'Code']])}</Field>
+            <Field label="Ship target" hint="Where the SHIP button deploys">{sel('shipTarget', [['hf', 'Hugging Face Space'], ['github', 'GitHub repo'], ['gcp', 'GCP VM']])}</Field>
+            <Field label="Show model status pill">{tog('showStatus')}</Field>
+          </div>)}
+
+          {sec === 'chat' && (<div className="adm-grid">
+            <Field label="LLM endpoint (OpenAI-compatible)" hint="Your proxy → Ollama on the GPU, or the HF berylize-api Space">{inp('apiBase')}</Field>
+            <Field label="Default model" hint="Picked on load when the server has it">{sel('defaultModel', [['', 'First available']].concat(models.map(m => [m, short(m)])))}</Field>
+            <Field label={'Temperature · ' + s.temperature}><input type="range" min="0" max="1.5" step="0.05" value={s.temperature} onChange={e => set('temperature', Number(e.target.value))} /></Field>
+            <Field label="Max tokens">{inp('maxTokens', 'number')}</Field>
+            <Field label="Stream responses">{tog('stream')}</Field>
+            <Field label="Allow live CSS restyling">{tog('allowCss')}</Field>
+            <Field label="Allow feature code (JS, runs on click)">{tog('allowJs')}</Field>
+            <Field label="Extra system instructions" hint="Appended to Beryl's system prompt"><textarea className="adm-input" rows="4" value={s.systemExtra} onChange={e => set('systemExtra', e.target.value)} /></Field>
+          </div>)}
+
+          {sec === 'center' && (<div className="adm-grid">
+            <Field label="Default center mode">{sel('defaultMode', [['builder', 'Builder (project preview)'], ['image', 'Image'], ['video', 'Video']])}</Field>
+            <Field label="Auto-switch when a diffusion model is selected">{tog('autoSwitch')}</Field>
+            <Field label="Image API endpoint">{inp('imgApi')}</Field>
+            <Field label="Video API endpoint">{inp('vidApi')}</Field>
+            <Field label={'Clip length · ' + s.clipSeconds + 's'} hint="LTX-2.5 max ≈ 13s per clip"><input type="range" min="2" max="13" step="1" value={s.clipSeconds} onChange={e => set('clipSeconds', Number(e.target.value))} /></Field>
+            <Field label="Auto-stitch (feed last frame into next clip)">{tog('autoStitch')}</Field>
+          </div>)}
+
+          {sec === 'voice' && (<div className="adm-grid">
+            <Field label="Agent name">{inp('agentName')}</Field>
+            <Field label="Agent role label">{inp('agentRole')}</Field>
+            <Field label="Voice model" hint={eng.size + ' · ' + eng.path}>
+              <select className="adm-input" value={s.voiceEngine} onChange={e => { set('voiceEngine', e.target.value); set('voice', VOICE_ENGINES[e.target.value].voices[0][0]); }}>
+                {Object.entries(VOICE_ENGINES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Voice (female only)">{sel('voice', eng.voices)}</Field>
+            <Field label={'Speaking speed · ' + s.voiceSpeed.toFixed(2) + '×'}><input type="range" min="0.6" max="1.6" step="0.05" value={s.voiceSpeed} onChange={e => set('voiceSpeed', Number(e.target.value))} /></Field>
+            <Field label="Microphone mode">{sel('micMode', [['toggle', 'Tap to toggle'], ['ptt', 'Push to talk'], ['open', 'Always listening']])}</Field>
+            <Field label="Speak Beryl's replies aloud">{tog('autoSpeak')}</Field>
+            <Field label="TTS server URL" hint="OpenAI-compatible /audio/speech">{inp('ttsUrl')}</Field>
+            <div className="adm-actions"><button className="adm-btn gold" onClick={testVoice}>▶ Test voice</button><span className="adm-hint">{voiceMsg}</span></div>
+          </div>)}
+
+          {sec === 'infra' && (<div className="adm-grid">
+            <Field label="GPU node name">{inp('nodeName')}</Field>
+            <Field label="Region / zone">{inp('region')}</Field>
+            <Field label="GPU">{inp('gpu')}</Field>
+            <Field label="Models folder" hint="Drop small models here"><input className="adm-input" readOnly value="/opt/berylize/small-models" /></Field>
+            <div className="adm-actions"><button className="adm-btn gold" onClick={onTest}>Test connection</button><span className="adm-hint">{online === true ? '✓ ' + models.length + ' models served at ' + s.apiBase : online === false ? '✕ cannot reach ' + s.apiBase + ' — is the tunnel + proxy running?' : ''}</span></div>
+            <div className="adm-list">{models.map(m => <div key={m}>● {short(m)}</div>)}</div>
+          </div>)}
+
+          {sec === 'appearance' && (<div className="adm-grid">
+            <Field label="Accent color"><input type="color" className="adm-color" value={s.accent} onChange={e => set('accent', e.target.value)} /></Field>
+            <Field label={'UI scale · ' + Math.round(s.fontScale * 100) + '%'}><input type="range" min="0.85" max="1.2" step="0.05" value={s.fontScale} onChange={e => set('fontScale', Number(e.target.value))} /></Field>
+            <Field label="Show voice agent panel">{tog('showAgent')}</Field>
+          </div>)}
+
+          {sec === 'data' && (<div className="adm-grid">
+            <div className="adm-actions"><button className="adm-btn" onClick={exportCfg}>Export settings</button>
+              <label className="adm-btn">Import settings<input type="file" accept="application/json" style={{ display: 'none' }} onChange={importCfg} /></label></div>
+            <div className="adm-actions"><button className="adm-btn" onClick={onClearChat}>Clear chat</button><button className="adm-btn" onClick={onResetPatches}>Reset Beryl's design changes</button></div>
+            <div className="adm-actions"><button className="adm-btn danger" onClick={() => Object.keys(DEFAULT_SETTINGS).forEach(k => set(k, DEFAULT_SETTINGS[k]))}>Restore all defaults</button></div>
+          </div>)}
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function Msg({ who, via, text, steps, js, onRun }) {
   return (
     <div className={'msg ' + who}>
@@ -543,7 +730,11 @@ function Transcript() {
 }
 
 function App() {
-  const [tab, setTab] = useState('preview');
+  const [settings, setSettings] = useState(loadSettings);
+  const S = settings;
+  const setSetting = (k, v) => setSettings(o => { const n = { ...o, [k]: v }; try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(n)); } catch (e) {} return n; });
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [tab, setTab] = useState(() => loadSettings().defaultTab);
   const [micOn, setMicOn] = useState(false);
   const [speakerOn, setSpeakerOn] = useState(true);
   const [voiceState, setVoiceState] = useState('idle');
@@ -556,7 +747,7 @@ function App() {
   const [online, setOnline] = useState(null);
   const [busy, setBusy] = useState(false);
   const [patches, setPatches] = useState(loadPatches);
-  const [centerMode, setCenterMode] = useState('builder');
+  const [centerMode, setCenterMode] = useState(() => loadSettings().defaultMode);
   const [imgPrompt, setImgPrompt] = useState('');
   const [vidPrompt, setVidPrompt] = useState('');
   const [genImg, setGenImg] = useState(null);
@@ -570,11 +761,12 @@ function App() {
 
   useEffect(() => { const f = feedRef.current; f.scrollTop = f.scrollHeight; }, [msgs]);
 
-  const refreshModels = () => fetch(CFG.base + '/models').then(r => r.json())
-    .then(j => { const ids = (j.data || []).map(m => m.id); setOnline(true); setModels(ids); setModel(cur => (ids.length && !ids.includes(cur) && !ids.includes(cur + ':latest')) ? ids[0] : cur); })
+  const refreshModels = () => fetch(S.apiBase.replace(/\/+$/, '') + '/models').then(r => r.json())
+    .then(j => { const ids = (j.data || []).map(m => m.id); setOnline(true); setModels(ids); setModel(cur => (S.defaultModel && ids.includes(S.defaultModel) && cur === CFG.model) ? S.defaultModel : (ids.length && !ids.includes(cur) && !ids.includes(cur + ':latest') && !HF_DIFFUSION_MODELS.some(d => d.id === cur)) ? ids[0] : cur); })
     .catch(() => setOnline(false));
-  useEffect(() => { refreshModels(); }, []);
-  useEffect(() => { setCenterMode(m => m === 'builder' || modelMode(model) !== 'builder' ? modelMode(model) : m); }, [model]);
+  useEffect(() => { refreshModels(); }, [S.apiBase]);
+  useEffect(() => { const r = document.documentElement.style; r.setProperty('--gold', S.accent); }, [S.accent]);
+  useEffect(() => { if (S.autoSwitch) setCenterMode(m => m === 'builder' || modelMode(model) !== 'builder' ? modelMode(model) : m); }, [model]);
 
   const saveToken = (t) => { setHfToken(t); try { localStorage.setItem(HF_TOKEN_KEY, t); } catch(e) {} };
 
@@ -582,7 +774,7 @@ function App() {
     if (!imgPrompt.trim()) return;
     setGenBusy(true); setGenErr(''); setGenImg(null);
     try {
-      const imgApiBase = CFG.imgApi || 'https://api-inference.huggingface.co/models/Qwen/Qwen-Image-2.1';
+      const imgApiBase = S.imgApi;
       const headers = { 'Content-Type': 'application/json' };
       if (hfToken) headers['Authorization'] = 'Bearer ' + hfToken;
       const body = refImg ? { inputs: imgPrompt, image: refImg.split(',')[1] } : { inputs: imgPrompt };
@@ -598,11 +790,11 @@ function App() {
     if (!vidPrompt.trim()) return;
     setGenBusy(true); setGenErr(''); setGenVid(null);
     try {
-      const vidApiBase = CFG.vidApi || 'https://api-inference.huggingface.co/models/Lightricks/LTX-2.5';
+      const vidApiBase = S.vidApi;
       const headers = { 'Content-Type': 'application/json' };
       if (hfToken) headers['Authorization'] = 'Bearer ' + hfToken;
       const lastFrame = vidClips.current.length ? vidClips.current[vidClips.current.length - 1] : null;
-      const body = lastFrame ? { inputs: vidPrompt, image: lastFrame } : { inputs: vidPrompt };
+      const body = { inputs: vidPrompt, parameters: { duration: S.clipSeconds } }; if (lastFrame && S.autoStitch) body.image = lastFrame;
       const r = await fetch(vidApiBase, { method: 'POST', headers, body: JSON.stringify(body) });
       if (!r.ok) { const t = await r.text(); throw new Error(r.status + ' ' + t.slice(0,120)); }
       const blob = await r.blob();
@@ -663,10 +855,15 @@ function App() {
     setBusy(true);
     const setLast = (t, error, extra) => setMsgs(m => { const c = m.slice(); c[c.length - 1] = { ...c[c.length - 1], text: t, error, ...extra }; return c; });
     try {
-      const res = await fetch(CFG.base + '/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model, temperature: 0.4, messages: [{ role: 'system', content: SYSTEM.replace('MODEL_NAME', short(model)) }].concat(history), stream: true }) });
+      if (HF_DIFFUSION_MODELS.some(d => d.id === model)) throw new Error(short(model) + ' is a diffusion model — use the prompt box in the center panel, or pick a chat model');
+      const sys = SYSTEM.replace('MODEL_NAME', short(model)).replace(/Beryl/g, S.agentName) + (S.systemExtra ? '\n\n' + S.systemExtra : '');
+      const res = await fetch(S.apiBase.replace(/\/+$/, '') + '/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model, temperature: S.temperature, max_tokens: S.maxTokens, messages: [{ role: 'system', content: sys }].concat(history), stream: S.stream }) });
       if (!res.ok) throw new Error('HTTP ' + res.status);
+      let out = '';
+      if (!S.stream) { const j = await res.json(); out = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || ''; setLast(out || '…'); }
+      else {
       const reader = res.body.getReader(), dec = new TextDecoder();
-      let buf = '', out = '';
+      let buf = '';
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -680,21 +877,22 @@ function App() {
           try { const j = JSON.parse(d); out += (j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content) || ''; setLast(out); } catch (e) {}
         }
       }
+      }
       if (!out) setLast('(empty response)', true);
       else {
         const blocks = [...out.matchAll(/```(css|js|javascript)[^\n]*\n([\s\S]*?)```/gi)];
         const css = blocks.filter(b => b[1].toLowerCase() === 'css').map(b => b[2].trim()).filter(Boolean);
         const js = blocks.filter(b => b[1].toLowerCase() !== 'css').map(b => b[2].trim()).filter(Boolean).join('\n');
-        if (css.length) setPatches(p => p.concat(css.map(code => ({ kind: 'css', code }))));
+        if (css.length && S.allowCss) setPatches(p => p.concat(css.map(code => ({ kind: 'css', code }))));
         if (css.length || js) {
           const clean = out.replace(/```[\s\S]*?```/g, '').replace(/\n{3,}/g, '\n\n').trim() || 'Done.';
-          setLast(clean, false, { raw: out, js, steps: css.length ? [['✓', 'Applied ' + css.length + ' style change' + (css.length > 1 ? 's' : '') + ' — /undo to revert', '#a1a1aa']] : undefined });
+          setLast(clean, false, { raw: out, js: S.allowJs ? js : '', steps: css.length && S.allowCss ? [['✓', 'Applied ' + css.length + ' style change' + (css.length > 1 ? 's' : '') + ' — /undo to revert', '#a1a1aa']] : undefined });
         }
       }
       setOnline(true);
     } catch (e) {
       setOnline(false);
-      setLast("Couldn't reach " + CFG.base + " (" + e.message + "). Start the local proxy (scripts/cors_proxy.py) and make sure the tunnel to the GPU VM is up. Open this page at https://aibruh-crane-builder-v1.static.hf.space, not inside huggingface.co.", true);
+      setLast("Couldn't reach " + S.apiBase + " (" + e.message + "). Start the local proxy (scripts/cors_proxy.py) and make sure the tunnel to the GPU VM is up. Open this page at https://aibruh-crane-builder-v1.static.hf.space, not inside huggingface.co.", true);
     }
     setBusy(false);
   };
@@ -704,7 +902,7 @@ function App() {
   const voiceLabelStyle = voiceState === 'idle' ? {} : { color: voiceState === 'muted' ? 'var(--fg-5)' : 'var(--gold)' };
 
   return (
-<div className="app">
+<div className="app" style={{ zoom: S.fontScale }}>
 
   <header className="header">
     <a href="#" className="logo">
@@ -714,7 +912,7 @@ function App() {
     </a>
     <div className="divider-v"></div>
     <button className="btn-project">
-      crane-it
+      {S.projectName}
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m6 9 6 6 6-6"/></svg>
     </button>
     <button className="btn-new">
@@ -726,21 +924,24 @@ function App() {
       <button className={tab === 'preview' ? 'tab active' : 'tab inactive'} onClick={() => setTab('preview')}>PREVIEW</button>
       <button className={tab === 'code' ? 'tab active' : 'tab inactive'} onClick={() => setTab('code')}>CODE</button>
     </div>
-    <div className="status-pill">
+    {S.showStatus && <div className="status-pill">
       <span className="status-dot" style={online === true ? {} : { background: 'var(--fg-5)', animation: 'none' }}></span>
-      {short(model)} · berylize-node
-    </div>
+      {short(model)} · {S.nodeName}
+    </div>}
+    <button className="btn-admin" title="Admin settings" onClick={() => setAdminOpen(true)}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+    </button>
     <button className="btn-ship">SHIP</button>
   </header>
 
-  <div className="body-grid">
+  <div className="body-grid" style={S.showAgent ? undefined : { gridTemplateColumns: "clamp(260px,24vw,400px) minmax(0,1fr)" }}>
 
     <aside className="chat-sidebar">
       <div className="messages" id="messages" ref={feedRef}>
 
         <div style={{display:'flex',alignItems:'center',gap:'8px',padding:'4px 2px',marginBottom:'2px'}}>
           <div style={{flex:1,height:'1px',background:'var(--border)'}}></div>
-          <span style={{fontFamily:"'Geist Mono',monospace",fontSize:'9px',letterSpacing:'.14em',color:'var(--fg-5)',whiteSpace:'nowrap'}}>berylize-node · us-east1-c · L4 GPU</span>
+          <span style={{fontFamily:"'Geist Mono',monospace",fontSize:'9px',letterSpacing:'.14em',color:'var(--fg-5)',whiteSpace:'nowrap'}}>{S.nodeName} · {S.region} · {S.gpu}</span>
           <div style={{flex:1,height:'1px',background:'var(--border)'}}></div>
         </div>
 
@@ -774,14 +975,14 @@ function App() {
               {menuOpen && (
                 <div style={{ position: 'absolute', bottom: '34px', left: 0, minWidth: '240px', background: 'var(--surface2)', border: '1px solid var(--border-mid)', borderRadius: '10px', padding: '4px', zIndex: 10, boxShadow: '0 10px 30px rgba(0,0,0,.5)' }}>
                   {(models.length ? models : [model]).map(id => (
-                    <button key={id} onClick={() => { setModel(id); setCenterMode(modelMode(id)); setMenuOpen(false); }} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-2)', gap: '8px' }}>
-                      <span>{short(id)}</span><span style={{fontSize:'9px',color:'var(--fg-5)',flexShrink:0}}>berylize-node</span>
+                    <button key={id} onClick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-2)', gap: '8px' }}>
+                      <span>{short(id)}</span><span style={{fontSize:'9px',color:'var(--fg-5)',flexShrink:0}}>{S.nodeName}</span>
                     </button>
                   ))}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>DIFFUSION · HF API</div>
                   {HF_DIFFUSION_MODELS.map(({id, label, tag}) => (
-                    <button key={id} onClick={() => { setModel(id); setCenterMode(modelMode(id)); setMenuOpen(false); }} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-3)', gap: '8px' }}>
+                    <button key={id} onClick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-3)', gap: '8px' }}>
                       <span>{label}</span><span style={{fontSize:'9px',color: tag.includes('image') ? '#818cf8' : '#34d399',flexShrink:0}}>{tag.split(' · ')[1].toUpperCase()}</span>
                     </button>
                   ))}
@@ -906,7 +1107,7 @@ function App() {
       )}
     </main>
 
-    <aside className="agent-sidebar">
+    {S.showAgent && <aside className="agent-sidebar">
 
       <div className="agent-card">
         <img src="uploads/beryl.jpeg" alt="Beryl — Voice Agent" />
@@ -919,15 +1120,15 @@ function App() {
         <div className="voice-overlay">
           <div className="agent-name-row">
             <div>
-              <div className="agent-name">Beryl</div>
-              <div className="agent-role">BUILD AGENT · BERYL LABS</div>
+              <div className="agent-name">{S.agentName}</div>
+              <div className="agent-role">{S.agentRole}</div>
             </div>
           </div>
 
           <div className="voice-canvas-wrap">
             <div className="voice-canvas-label">
               <span className="voice-state-text" id="voiceStateLabel" style={voiceLabelStyle}>{voiceLabelText}</span>
-              <span className="voice-model-text">berylize-7b · us-east1-c</span>
+              <span className="voice-model-text">{VOICE_ENGINES[S.voiceEngine].label} · {(VOICE_ENGINES[S.voiceEngine].voices.find(v => v[0] === S.voice) || ['', S.voice])[1].split(' · ')[0]}</span>
             </div>
             <VoiceCanvas />
           </div>
@@ -954,9 +1155,11 @@ function App() {
         <Transcript />
       </div>
 
-    </aside>
+    </aside>}
 
   </div>
+  {adminOpen && <AdminPanel s={S} set={setSetting} onClose={() => setAdminOpen(false)} models={models} online={online} onTest={refreshModels}
+    onClearChat={() => setMsgs([])} onResetPatches={() => setPatches([])} />}
 </div>
   );
 }
