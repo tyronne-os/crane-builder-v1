@@ -680,7 +680,7 @@ const VoiceOut = (() => {
 
 // ngrok's free tier answers browser fetches with a warning page (no CORS headers) unless this header is sent.
 const tunnelHdr = (url) => /ngrok/i.test(url) ? { 'ngrok-skip-browser-warning': '1' } : {};
-const BACKCHANNEL_WORDS = new Set(['mm', 'mhm', 'hmm', 'mmhmm', 'uh', 'huh', 'yeah', 'yes', 'yep', 'yup', 'right', 'okay', 'ok', 'sure', 'wow', 'oh', 'ah', 'cool', 'nice', 'true', 'totally', 'exactly', 'gotcha', 'interesting']);
+const BACKCHANNEL_WORDS = new Set(['mm', 'mmm', 'hm', 'mhm', 'hmm', 'mmhmm', 'uh', 'huh', 'yeah', 'yes', 'yep', 'yup', 'right', 'okay', 'ok', 'sure', 'wow', 'oh', 'ah', 'cool', 'nice', 'true', 'totally', 'exactly', 'gotcha', 'interesting']);
 // "mm-hm", "yeah", "oh wow": the user nodding along, not taking the floor.
 const isBackchannelText = (t) => { const w = (t.toLowerCase().match(/[a-z']+/g) || []); return w.length > 0 && w.length <= 3 && w.every(x => BACKCHANNEL_WORDS.has(x)); };
 // What a piece of heard speech should do right now: 'turn' (normal), 'ignore' (nodding along or barge-in off), 'interrupt' (cut her off).
