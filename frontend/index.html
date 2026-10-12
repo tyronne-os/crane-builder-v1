@@ -494,6 +494,11 @@ const isImageModel = (id) => /qwen.?image|diffus|flux|sdxl|imagen|dalle|kolors|h
 const isVideoModel = (id) => /video|ltx|wan2|mochi|cogvideo|minimax.h3|hunyuan.?video|sora|kling/i.test(id);
 const modelMode = (id) => isVideoModel(id) ? 'video' : isImageModel(id) ? 'image' : 'builder';
 
+const HF_DIFFUSION_MODELS = [
+  { id: 'Qwen/Qwen-Image-2.1-Uncensored', label: 'Qwen-Image-2.1-Uncensored', tag: 'HF · image' },
+  { id: 'Lightricks/LTX-2.5',             label: 'LTX-2.5',                   tag: 'HF · video' },
+];
+
 function Msg({ who, via, text, steps, js, onRun }) {
   return (
     <div className={'msg ' + who}>
@@ -767,9 +772,18 @@ function App() {
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>
               </button>
               {menuOpen && (
-                <div style={{ position: 'absolute', bottom: '34px', left: 0, minWidth: '220px', background: 'var(--surface2)', border: '1px solid var(--border-mid)', borderRadius: '10px', padding: '4px', zIndex: 10, boxShadow: '0 10px 30px rgba(0,0,0,.5)' }}>
+                <div style={{ position: 'absolute', bottom: '34px', left: 0, minWidth: '240px', background: 'var(--surface2)', border: '1px solid var(--border-mid)', borderRadius: '10px', padding: '4px', zIndex: 10, boxShadow: '0 10px 30px rgba(0,0,0,.5)' }}>
                   {(models.length ? models : [model]).map(id => (
-                    <button key={id} onClick={() => { setModel(id); setMenuOpen(false); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-2)' }}>{short(id)} · berylize-node</button>
+                    <button key={id} onClick={() => { setModel(id); setCenterMode(modelMode(id)); setMenuOpen(false); }} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-2)', gap: '8px' }}>
+                      <span>{short(id)}</span><span style={{fontSize:'9px',color:'var(--fg-5)',flexShrink:0}}>berylize-node</span>
+                    </button>
+                  ))}
+                  <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
+                  <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>DIFFUSION · HF API</div>
+                  {HF_DIFFUSION_MODELS.map(({id, label, tag}) => (
+                    <button key={id} onClick={() => { setModel(id); setCenterMode(modelMode(id)); setMenuOpen(false); }} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-3)', gap: '8px' }}>
+                      <span>{label}</span><span style={{fontSize:'9px',color: tag.includes('image') ? '#818cf8' : '#34d399',flexShrink:0}}>{tag.split(' · ')[1].toUpperCase()}</span>
+                    </button>
                   ))}
                 </div>
               )}
