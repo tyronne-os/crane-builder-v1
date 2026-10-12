@@ -21,6 +21,8 @@
     body{background:#09090b;color:#fafafa;font-family:'Geist',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
     a{color:inherit;text-decoration:none}
     a:hover{color:#fbbf24}
+    .hp{width:max(min(100vw,125vh),100vh);right:0;bottom:0}
+    @media (max-aspect-ratio:1/1){.hp{--s:min(150vw,85vh);width:var(--s);right:auto;bottom:auto;left:calc(50vw - .47*var(--s));top:max(64px,6vh)}}
     @keyframes focusIn{0%{filter:blur(18px) brightness(.4);transform:scale(1.14)}100%{filter:blur(0) brightness(1);transform:scale(1)}}
     @keyframes kb{0%{transform:scale(1) translate3d(0,0,0)}100%{transform:scale(1.06) translate3d(-1%,-1.2%,0)}}
     @keyframes sway{0%{transform:rotate(-.55deg) translateY(2px)}50%{transform:rotate(.55deg) translateY(-5px)}100%{transform:rotate(-.55deg) translateY(2px)}}
@@ -194,7 +196,7 @@ class Component extends DCLogic {
     const img = (extra) => h('img', { src, alt: '', draggable: false, style: Object.assign({ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', userSelect: 'none' }, extra || {}) });
     const grain = "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")";
     this._scene = h('div', { style: { position: 'absolute', inset: 0, overflow: 'hidden', animation: 'focusIn 2.6s cubic-bezier(.2,.7,.1,1) both' } },
-      h('div', { style: { position: 'absolute', width: 'max(min(100vw,125vh),100vh)', aspectRatio: '1 / 1', right: 0, bottom: 0 } },
+      h('div', { className: 'hp', style: { position: 'absolute', aspectRatio: '1 / 1' } },
         h('div', { style: { position: 'absolute', inset: 0, transformOrigin: '34% 38%', animation: 'kb 22s ease-in-out 2.6s infinite alternate', willChange: 'transform' } },
           img(),
           img({ clipPath: clip, WebkitClipPath: clip, filter: 'blur(6px) brightness(.9)' }),
