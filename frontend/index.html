@@ -533,7 +533,7 @@ You can also operate the user's computer. When the user asks you to do something
 
 Computer example: \`\`\`computer\n[{"do":"open","target":"notepad"},{"do":"wait","s":1},{"do":"type","text":"hello"}]\n\`\`\``;
 
-const short = (id) => id.replace(/^hf\.co\/[^/]+\//, '').replace(/-GGUF/i, '');
+const short = (id) => id.replace(/^hf\.co\/[^/]+\//, '').replace(/^[\w.-]+\/(?=[^/]+$)/, '').replace(/-GGUF/i, '');
 const PATCH_KEY = 'crane.patches';
 const HF_TOKEN_KEY = 'crane.hftoken';
 const loadPatches = () => { try { return JSON.parse(localStorage.getItem(PATCH_KEY) || '[]'); } catch (e) { return []; } };
