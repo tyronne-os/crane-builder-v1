@@ -536,7 +536,7 @@ const HF_DIFFUSION_MODELS = [
 ];
 
 const HF_CHAT_MODELS = [
-  { id: 'Qwen2.5-Coder-1.5B-Instruct-abliterated', label: 'Qwen2.5-Coder-1.5B · Uncensored', tag: 'HF · CPU', base: 'https://aibruh-berylize-api.hf.space/v1' },
+  { id: 'Qwen/Qwen2.5-Coder-1.5B-Instruct', label: 'Qwen2.5-Coder-1.5B', tag: 'HF · GPU', base: 'https://api-inference.huggingface.co/v1', fallback: 'https://aibruh-berylize-api.hf.space/v1' },
 ];
 
 const VOICE_ENGINES = {
@@ -554,7 +554,7 @@ const VOICE_ENGINES = {
 const SETTINGS_KEY = 'crane.settings';
 const DEFAULT_SETTINGS = {
   projectName: 'crane-it', defaultTab: 'preview', showStatus: true, shipTarget: 'hf',
-  apiBase: CFG.base, defaultModel: '', temperature: 0.4, maxTokens: 2048, stream: true, systemExtra: '', allowCss: true, allowJs: true,
+  apiBase: CFG.base || 'https://api-inference.huggingface.co/v1', defaultModel: 'Qwen/Qwen2.5-Coder-1.5B-Instruct', temperature: 0.4, maxTokens: 2048, stream: true, systemExtra: '', allowCss: true, allowJs: true,
   defaultMode: 'builder', autoSwitch: true, imgApi: 'https://api-inference.huggingface.co/models/Qwen/Qwen-Image-2.1', vidApi: 'https://api-inference.huggingface.co/models/Lightricks/LTX-2.5', clipSeconds: 8, autoStitch: true,
   agentName: 'Beryl', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'kokoro', voice: 'af_heart', voiceSpeed: 1.0, ttsUrl: 'http://localhost:8880/v1', autoSpeak: false, micMode: 'toggle',
   nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU',
@@ -985,9 +985,9 @@ function App() {
                   ))}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>SMALL MODELS · HF API</div>
-                  {HF_CHAT_MODELS.map(({id, label, tag, base}) => (
+                  {HF_CHAT_MODELS.map(({id, label, base}) => (
                     <button key={id} onClick={() => { setModel(id); setSetting('apiBase', base); setMenuOpen(false); }} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-2)', gap: '8px' }}>
-                      <span>{label}</span><span style={{fontSize:'9px',color:'#f59e0b',flexShrink:0}}>CPU</span>
+                      <span>{label}</span><span style={{fontSize:'9px',color:'#34d399',flexShrink:0}}>FREE GPU</span>
                     </button>
                   ))}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
