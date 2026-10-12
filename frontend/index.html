@@ -510,7 +510,7 @@ const VOICE_LABELS = { listening:'LISTENING', muted:'MUTED', speaking:'SPEAKING'
 
 const CFG = (() => {
   const q = new URLSearchParams(location.search);
-  return { base: (q.get('api') || 'http://localhost:11435/v1').replace(/\/+$/, ''), model: q.get('model') || 'qwen2.5' };
+  return { base: (q.get('api') || 'http://localhost:11435/v1').replace(/\/+$/, ''), model: q.get('model') || 'Qwen/Qwen2.5-Coder-1.5B-Instruct' };
 })();
 
 const SYSTEM = `You are Beryl, the build agent inside Crane Builder, made by Beryl Labs. You run on the open-weights model "MODEL_NAME" on the user's own GPU server (berylize-node); say so if asked which model you are. Be concise and direct.
@@ -518,7 +518,9 @@ const SYSTEM = `You are Beryl, the build agent inside Crane Builder, made by Ber
 You can change this page's design live. When the user asks for a visual change, reply with one short sentence, then ONE fenced css block containing the rules; the page applies it instantly (use !important when overriding existing rules). If the user asks for new behavior or a feature that CSS cannot do, reply with one short sentence and ONE fenced js block (plain browser JavaScript, no imports, runs once; it may create elements and append them to document.body); the user clicks Run to apply it. Put nothing but code inside fences. If no UI change is requested, just answer normally.
 
 Page structure: .app > header.header (.logo > .logo-c .logo-rane .logo-tag, .divider-v, .btn-project, .btn-new, .header-spacer, .tab-group > .tab, .status-pill > .status-dot, .btn-ship) and .body-grid with three columns. Left: aside.chat-sidebar (.messages > .msg.me/.msg.bot > .msg-meta .msg-bubble .msg-steps > .step; .composer-wrap > .composer > textarea + .composer-row > .tool-btn, .model-chip, .composer-spacer, .btn-mic, .btn-send). Center: main.main-panel (.url-bar > .url-text .live-badge; .preview-frame > .idle-state > .idle-icon .idle-title .idle-sub .idle-pulse, or .code-pane). Right: aside.agent-sidebar (.agent-card > img, .agent-card-overlay, .live-badge-pill, .voice-overlay > .agent-name .agent-role, .voice-canvas-wrap > .voice-canvas-label, canvas; .agent-controls > .ctrl-btn; .transcript-strip > .transcript-label).
-CSS variables on :root: --bg #09090b, --surface #111113, --surface2 #18181b, --border, --border-mid, --fg, --fg-2..--fg-5 (text greys), --gold #eeca50, --gold-dim #c6a23a, --gold-dark #6c4a08, --gold-grad, --gold-chrome, --green #34d399, --red #dc2626. Fonts: Geist (UI), Geist Mono (labels), Instrument Serif (accents).`;
+CSS variables on :root: --bg #09090b, --surface #111113, --surface2 #18181b, --border, --border-mid, --fg, --fg-2..--fg-5 (text greys), --gold #eeca50, --gold-dim #c6a23a, --gold-dark #6c4a08, --gold-grad, --gold-chrome, --green #34d399, --red #dc2626. Fonts: Geist (UI), Geist Mono (labels), Instrument Serif (accents).
+
+You can also operate the user's computer. When the user asks you to do something on their computer (open an app or website, type, press keys, click), reply with one short sentence and ONE fenced computer block holding a JSON array of actions. Allowed actions: {"do":"open","target":"https://… or an app/file path"}, {"do":"type","text":"…"}, {"do":"key","keys":"ctrl+s"}, {"do":"click","x":100,"y":200}, {"do":"scroll","amount":-5}, {"do":"wait","s":1}, {"do":"screenshot"}. Example: \`\`\`computer\n[{"do":"open","target":"notepad"},{"do":"wait","s":1},{"do":"type","text":"hello"}]\n\`\`\``;
 
 const short = (id) => id.replace(/^hf\.co\/[^/]+\//, '').replace(/-GGUF/i, '');
 const PATCH_KEY = 'crane.patches';
@@ -536,7 +538,7 @@ const HF_DIFFUSION_MODELS = [
 ];
 
 const HF_CHAT_MODELS = [
-  { id: 'Qwen/Qwen2.5-Coder-1.5B-Instruct', label: 'Qwen2.5-Coder-1.5B', tag: 'HF · GPU', base: 'https://api-inference.huggingface.co/v1', fallback: 'https://aibruh-berylize-api.hf.space/v1' },
+  { id: 'Qwen/Qwen2.5-Coder-1.5B-Instruct', label: 'Qwen2.5-Coder-1.5B', base: 'https://router.huggingface.co/v1', fallback: 'https://aibruh-berylize-api.hf.space/v1', fallbackModel: 'Qwen2.5-Coder-1.5B-abliterated' },
 ];
 
 const VOICE_ENGINES = {
@@ -554,19 +556,27 @@ const VOICE_ENGINES = {
 const SETTINGS_KEY = 'crane.settings';
 const DEFAULT_SETTINGS = {
   projectName: 'crane-it', defaultTab: 'preview', showStatus: true, shipTarget: 'hf',
-  apiBase: CFG.base || 'https://api-inference.huggingface.co/v1', defaultModel: 'Qwen/Qwen2.5-Coder-1.5B-Instruct', temperature: 0.4, maxTokens: 2048, stream: true, systemExtra: '', allowCss: true, allowJs: true,
+  gpuBase: CFG.base, defaultModel: '', temperature: 0.4, maxTokens: 2048, stream: true, systemExtra: '', allowCss: true, allowJs: true,
   defaultMode: 'builder', autoSwitch: true, imgApi: 'https://api-inference.huggingface.co/models/Qwen/Qwen-Image-2.1', vidApi: 'https://api-inference.huggingface.co/models/Lightricks/LTX-2.5', clipSeconds: 8, autoStitch: true,
   agentName: 'Beryl', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'kokoro', voice: 'af_heart', voiceSpeed: 1.0, ttsUrl: 'http://localhost:8880/v1', autoSpeak: false, micMode: 'toggle',
   nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU',
   accent: '#eeca50', fontScale: 1, showAgent: true,
+  cuEnabled: true, cuUrl: 'http://127.0.0.1:8765', cuToken: '', cuConfirm: true,
 };
-const loadSettings = () => { try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }; } catch (e) { return { ...DEFAULT_SETTINGS }; } };
+(() => {
+  const m = location.hash.match(/[#&]cu=([\w-]+)/);
+  if (!m) return;
+  try { const o = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); o.cuToken = m[1]; localStorage.setItem(SETTINGS_KEY, JSON.stringify(o)); } catch (e) {}
+  history.replaceState(null, '', location.pathname + location.search);
+})();
+const loadSettings = () => { try { const o = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); if (!o.gpuBase && o.apiBase) o.gpuBase = o.apiBase; delete o.apiBase; return { ...DEFAULT_SETTINGS, ...o }; } catch (e) { return { ...DEFAULT_SETTINGS }; } };
 
 const ADMIN_SECTIONS = [
   ['workspace', 'Workspace', 'Header, project & shipping'],
   ['chat', 'Chat & Model', 'LLM endpoint, sampling, prompt'],
   ['center', 'Preview & Diffusion', 'Builder, image & video'],
   ['voice', 'Voice Agent', 'TTS engine & female voices'],
+  ['computer', 'Computer Use', 'Let Beryl drive your PC'],
   ['infra', 'GPU & Infrastructure', 'Node, region, connection'],
   ['appearance', 'Appearance', 'Accent, scale, layout'],
   ['data', 'Data & Reset', 'Export, import, clear'],
@@ -627,8 +637,16 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
             <Field label="Show model status pill">{tog('showStatus')}</Field>
           </div>)}
 
+          {sec === 'computer' && (<div className="adm-grid">
+            <Field label="Enable computer use" hint="Chat or voice can ask Beryl to open apps, type, press keys and click">{tog('cuEnabled')}</Field>
+            <Field label="Ask before running" hint="Shows a RUN ON MY COMPUTER button. Turn off to run immediately">{tog('cuConfirm')}</Field>
+            <Field label="Crane Hands URL" hint="Local agent started by the desktop icon">{inp('cuUrl')}</Field>
+            <Field label="Crane Hands token" hint="Printed in %USERPROFILE%\\.crane\\token.txt">{inp('cuToken')}</Field>
+            <div className="adm-actions"><button className="adm-btn gold" onClick={() => fetch(s.cuUrl.replace(/\/+$/, '') + '/health', { headers: { 'X-Crane-Token': s.cuToken } }).then(r => r.json()).then(j => alert(j.ok ? 'Crane Hands connected · screen ' + j.screen : 'Rejected: ' + j.error)).catch(e => alert('Cannot reach Crane Hands: ' + e.message))}>Test Crane Hands</button></div>
+          </div>)}
+
           {sec === 'chat' && (<div className="adm-grid">
-            <Field label="LLM endpoint (OpenAI-compatible)" hint="Your proxy → Ollama on the GPU, or the HF berylize-api Space">{inp('apiBase')}</Field>
+            <Field label="GPU endpoint (tunnel + proxy)" hint="Used only when you pick a GPU model. Small Qwen always runs on HF free GPU, falling back to the berylize-api CPU Space">{inp('gpuBase')}</Field>
             <Field label="Default model" hint="Picked on load when the server has it">{sel('defaultModel', [['', 'First available']].concat(models.map(m => [m, short(m)])))}</Field>
             <Field label={'Temperature · ' + s.temperature}><input type="range" min="0" max="1.5" step="0.05" value={s.temperature} onChange={e => set('temperature', Number(e.target.value))} /></Field>
             <Field label="Max tokens">{inp('maxTokens', 'number')}</Field>
@@ -668,7 +686,7 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
             <Field label="Region / zone">{inp('region')}</Field>
             <Field label="GPU">{inp('gpu')}</Field>
             <Field label="Models folder" hint="Drop small models here"><input className="adm-input" readOnly value="/opt/berylize/small-models" /></Field>
-            <div className="adm-actions"><button className="adm-btn gold" onClick={onTest}>Test connection</button><span className="adm-hint">{online === true ? '✓ ' + models.length + ' models served at ' + s.apiBase : online === false ? '✕ cannot reach ' + s.apiBase + ' — is the tunnel + proxy running?' : ''}</span></div>
+            <div className="adm-actions"><button className="adm-btn gold" onClick={onTest}>Test connection</button><span className="adm-hint">{online === true ? '✓ ' + models.length + ' models served at ' + s.gpuBase : online === false ? '✕ cannot reach ' + s.gpuBase + ' — is the tunnel + proxy running?' : ''}</span></div>
             <div className="adm-list">{models.map(m => <div key={m}>● {short(m)}</div>)}</div>
           </div>)}
 
@@ -690,7 +708,7 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
   );
 }
 
-function Msg({ who, via, text, steps, js, onRun }) {
+function Msg({ who, via, text, steps, js, onRun, cu, onRunCu, shot }) {
   return (
     <div className={'msg ' + who}>
       <div className="msg-meta"><span>{who === 'me' ? 'YOU' : 'BERYL'}</span>{via ? <span>· {via}</span> : null}</div>
@@ -703,6 +721,13 @@ function Msg({ who, via, text, steps, js, onRun }) {
       {js ? (
         <button onClick={onRun} style={{ alignSelf: 'flex-start', marginTop: '6px', height: '28px', padding: '0 12px', borderRadius: '8px', border: '1px solid rgba(255,236,170,.5)', background: 'var(--gold-grad)', color: '#1a1204', font: "700 11px 'Geist',sans-serif", letterSpacing: '.08em', cursor: 'pointer' }}>RUN FEATURE CODE</button>
       ) : null}
+      {cu ? (
+        <div className="msg-steps">
+          {cu.map((a, k) => <div className="step" key={k}><span style={{color:'var(--gold)'}}>›</span><span>{a.do} {a.target || a.text || a.keys || (a.x != null ? a.x + ',' + a.y : '') || a.amount || a.s || ''}</span></div>)}
+          <button onClick={onRunCu} style={{ alignSelf: 'flex-start', marginTop: '6px', height: '28px', padding: '0 12px', borderRadius: '8px', border: '1px solid rgba(255,236,170,.5)', background: 'var(--gold-grad)', color: '#1a1204', font: "700 11px 'Geist',sans-serif", letterSpacing: '.08em', cursor: 'pointer' }}>RUN ON MY COMPUTER</button>
+        </div>
+      ) : null}
+      {shot ? <img src={'data:image/png;base64,' + shot} style={{ width: '92%', borderRadius: '10px', border: '1px solid var(--border)' }} /> : null}
     </div>
   );
 }
@@ -765,10 +790,10 @@ function App() {
 
   useEffect(() => { const f = feedRef.current; f.scrollTop = f.scrollHeight; }, [msgs]);
 
-  const refreshModels = () => fetch(S.apiBase.replace(/\/+$/, '') + '/models').then(r => r.json())
-    .then(j => { const ids = (j.data || []).map(m => m.id); setOnline(true); setModels(ids); setModel(cur => (S.defaultModel && ids.includes(S.defaultModel) && cur === CFG.model) ? S.defaultModel : (ids.length && !ids.includes(cur) && !ids.includes(cur + ':latest') && !HF_DIFFUSION_MODELS.some(d => d.id === cur)) ? ids[0] : cur); })
-    .catch(() => setOnline(false));
-  useEffect(() => { refreshModels(); }, [S.apiBase]);
+  const refreshModels = () => fetch(S.gpuBase.replace(/\/+$/, '') + '/models').then(r => r.json())
+    .then(j => { const ids = (j.data || []).map(m => m.id); setOnline(true); setModels(ids); setModel(cur => (S.defaultModel && ids.includes(S.defaultModel) && cur === CFG.model) ? S.defaultModel : cur); })
+    .catch(() => { setOnline(false); setModels([]); });
+  useEffect(() => { refreshModels(); }, [S.gpuBase]);
   useEffect(() => { const r = document.documentElement.style; r.setProperty('--gold', S.accent); }, [S.accent]);
   useEffect(() => { if (S.autoSwitch) setCenterMode(m => m === 'builder' || modelMode(model) !== 'builder' ? modelMode(model) : m); }, [model]);
 
@@ -831,6 +856,17 @@ function App() {
     setMsgs(ms => ms.map((x, j) => j === i ? { ...x, js: '', steps: (x.steps || []).concat([[err ? '✕' : '✓', err ? 'Error: ' + err : 'Feature code ran', err ? '#ef4444' : '#a1a1aa']]) } : x));
   };
 
+  const runComputer = async (i, actions) => {
+    const acts = actions || msgs[i].cu;
+    const note = (steps, shot) => setMsgs(ms => { const c = ms.slice(); const k = i == null ? c.length - 1 : i; c[k] = { ...c[k], cu: null, shot: shot || c[k].shot, steps: (c[k].steps || []).concat(steps) }; return c; });
+    try {
+      const r = await fetch(S.cuUrl.replace(/\/+$/, '') + '/run', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Crane-Token': S.cuToken }, body: JSON.stringify({ actions: acts }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+      note(j.results.map(x => [x.ok ? '✓' : '✕', x.msg, x.ok ? '#a1a1aa' : '#ef4444']), j.screenshot);
+    } catch (e) { note([['✕', 'Computer agent: ' + e.message + ' — is Crane Hands running? (desktop icon starts it)', '#ef4444']]); }
+  };
+
   const toggleMic = () => { const on = !micOn; setMicOn(on); setVoiceState(on ? 'listening' : 'muted'); };
   const toggleSpeaker = () => { const on = !speakerOn; setSpeakerOn(on); setVoiceState(on ? (micOn ? 'listening' : 'muted') : 'speaker-off'); };
   const endCall = () => { setMicOn(false); setSpeakerOn(true); setVoiceState('idle'); };
@@ -861,7 +897,13 @@ function App() {
     try {
       if (HF_DIFFUSION_MODELS.some(d => d.id === model)) throw new Error(short(model) + ' is a diffusion model — use the prompt box in the center panel, or pick a chat model');
       const sys = SYSTEM.replace('MODEL_NAME', short(model)).replace(/Beryl/g, S.agentName) + (S.systemExtra ? '\n\n' + S.systemExtra : '');
-      const res = await fetch(S.apiBase.replace(/\/+$/, '') + '/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model, temperature: S.temperature, max_tokens: S.maxTokens, messages: [{ role: 'system', content: sys }].concat(history), stream: S.stream }) });
+      const hf = HF_CHAT_MODELS.find(h => h.id === model);
+      const call = (base, id, auth) => fetch(base.replace(/\/+$/, '') + '/chat/completions', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, auth && hfToken ? { Authorization: 'Bearer ' + hfToken } : {}), body: JSON.stringify({ model: id, temperature: S.temperature, max_tokens: S.maxTokens, messages: [{ role: 'system', content: sys }].concat(history), stream: S.stream }) });
+      let res;
+      if (hf) {
+        res = hfToken ? await call(hf.base, hf.id, true).catch(() => null) : null;
+        if (!res || !res.ok) { setLast('HF free GPU unavailable — using CPU space…'); res = await call(hf.fallback, hf.fallbackModel, false); }
+      } else res = await call(S.gpuBase, model, false);
       if (!res.ok) throw new Error('HTTP ' + res.status);
       let out = '';
       if (!S.stream) { const j = await res.json(); out = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || ''; setLast(out || '…'); }
@@ -885,18 +927,22 @@ function App() {
       if (!out) setLast('(empty response)', true);
       else {
         const blocks = [...out.matchAll(/```(css|js|javascript)[^\n]*\n([\s\S]*?)```/gi)];
+        const cuBlock = [...out.matchAll(/```computer[^\n]*\n([\s\S]*?)```/gi)].map(b => b[1].trim())[0];
+        let cu = null;
+        if (cuBlock && S.cuEnabled) { try { cu = JSON.parse(cuBlock); if (!Array.isArray(cu)) cu = [cu]; } catch (e) { cu = null; } }
         const css = blocks.filter(b => b[1].toLowerCase() === 'css').map(b => b[2].trim()).filter(Boolean);
         const js = blocks.filter(b => b[1].toLowerCase() !== 'css').map(b => b[2].trim()).filter(Boolean).join('\n');
         if (css.length && S.allowCss) setPatches(p => p.concat(css.map(code => ({ kind: 'css', code }))));
-        if (css.length || js) {
+        if (css.length || js || cu) {
           const clean = out.replace(/```[\s\S]*?```/g, '').replace(/\n{3,}/g, '\n\n').trim() || 'Done.';
-          setLast(clean, false, { raw: out, js: S.allowJs ? js : '', steps: css.length && S.allowCss ? [['✓', 'Applied ' + css.length + ' style change' + (css.length > 1 ? 's' : '') + ' — /undo to revert', '#a1a1aa']] : undefined });
+          setLast(clean, false, { raw: out, js: S.allowJs ? js : '', cu: cu && S.cuConfirm ? cu : null, steps: css.length && S.allowCss ? [['✓', 'Applied ' + css.length + ' style change' + (css.length > 1 ? 's' : '') + ' — /undo to revert', '#a1a1aa']] : undefined });
+          if (cu && !S.cuConfirm) setTimeout(() => runComputer(null, cu), 0);
         }
       }
       setOnline(true);
     } catch (e) {
       setOnline(false);
-      setLast("Couldn't reach " + S.apiBase + " (" + e.message + "). Start the local proxy (scripts/cors_proxy.py) and make sure the tunnel to the GPU VM is up. Open this page at https://aibruh-crane-builder-v1.static.hf.space, not inside huggingface.co.", true);
+      setLast("Couldn't reach " + (HF_CHAT_MODELS.some(h => h.id === model) ? 'Hugging Face' : S.gpuBase) + " (" + e.message + "). Start the local proxy (scripts/cors_proxy.py) and make sure the tunnel to the GPU VM is up. Open this page at https://aibruh-crane-builder-v1.static.hf.space, not inside huggingface.co.", true);
     }
     setBusy(false);
   };
@@ -949,7 +995,7 @@ function App() {
           <div style={{flex:1,height:'1px',background:'var(--border)'}}></div>
         </div>
 
-        {msgs.map((m, i) => <Msg key={i} {...m} onRun={() => runFeature(i)} />)}
+        {msgs.map((m, i) => <Msg key={i} {...m} onRun={() => runFeature(i)} onRunCu={() => runComputer(i)} />)}
 
       </div>
 
@@ -986,7 +1032,7 @@ function App() {
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>SMALL MODELS · HF API</div>
                   {HF_CHAT_MODELS.map(({id, label, base}) => (
-                    <button key={id} onClick={() => { setModel(id); setSetting('apiBase', base); setMenuOpen(false); }} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-2)', gap: '8px' }}>
+                    <button key={id} onClick={() => { setModel(id); setMenuOpen(false); }} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-2)', gap: '8px' }}>
                       <span>{label}</span><span style={{fontSize:'9px',color:'#34d399',flexShrink:0}}>FREE GPU</span>
                     </button>
                   ))}
