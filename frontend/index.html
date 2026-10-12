@@ -802,7 +802,7 @@ function Toggle({ on, onChange }) {
   return <button type="button" className={'adm-toggle' + (on ? ' on' : '')} onClick={() => onChange(!on)}><span></span></button>;
 }
 
-function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onResetPatches, onEditProfile }) {
+function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onResetPatches, onEditProfile, voiceErr }) {
   const profList = (title, ids) => (
     <div className="prof-rows">
       <span className="adm-label" style={{ padding: '2px 10px 6px' }}>{title} · hover a model and click ✎</span>
@@ -921,6 +921,7 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
             <Field label="Listening language" hint="Speech recognition (Chrome)">{inp('sttLang')}</Field>
             <Field label="Kokoro server (this PC)" hint="Started by the desktop icon">{inp('ttsUrl')}</Field>
             <Field label="VibeVoice server (GPU tunnel)" hint="Falls back to Kokoro when offline">{inp('ttsGpuUrl')}</Field>
+            {voiceErr && <div className="adm-field" style={{ gridColumn: '1 / -1' }}><span className="adm-hint" style={{ color: '#ef4444', fontFamily: "'Geist Mono',monospace", fontSize: '11px' }}>⚠ {voiceErr}</span></div>}
             <div className="adm-actions"><button className="adm-btn gold" onClick={testVoice}>▶ Test voice</button><span className="adm-hint">{voiceMsg}</span></div>
             {profList('Voice model profiles', Object.entries(VOICE_ENGINES).map(([k, v]) => ['voice:' + k, v.label]))}
           </div>)}
@@ -1551,17 +1552,13 @@ function App() {
         </div>
       </div>
 
-      <div className="transcript-strip">
-        <span className="transcript-label">TRANSCRIPT</span>
-        <Transcript text={voiceErr ? voiceErr : interim ? 'You: ' + interim + '…' : said} />
-      </div>
 
     </aside>}
 
   </div>
   {profEdit && <ProfileEditor key={profEdit} id={profEdit} profile={S.profiles[profEdit]} gpuBase={S.gpuBase} onSave={p => setProfile(profEdit, p)} onClose={() => setProfEdit(null)} />}
   {adminOpen && <AdminPanel s={S} set={setSetting} onEditProfile={setProfEdit} onClose={() => setAdminOpen(false)} models={models} online={online} onTest={refreshModels}
-    onClearChat={() => setMsgs([])} onResetPatches={() => setPatches([])} />}
+    onClearChat={() => setMsgs([])} onResetPatches={() => setPatches([])} voiceErr={voiceErr} />}
 </div>
   );
 }
