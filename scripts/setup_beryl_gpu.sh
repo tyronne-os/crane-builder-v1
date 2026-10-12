@@ -14,7 +14,10 @@ nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv | tee gpu.t
 curl -fsSL "$RAW/scripts/beryl_gpu_server.py" -o beryl_gpu_server.py
 [ -d .venv ] || python3 -m venv .venv
 .venv/bin/pip install -q --upgrade pip
-.venv/bin/pip install -q qwen-asr qwen-tts fastapi "uvicorn[standard]" soundfile numpy
+.venv/bin/pip install -q torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+# qwen-asr pins transformers==4.57.6 and qwen-tts pins 4.57.3; both run on 4.57.6, so install qwen-tts without its pin.
+.venv/bin/pip install -q qwen-asr fastapi "uvicorn[standard]" soundfile numpy
+.venv/bin/pip install -q --no-deps qwen-tts && .venv/bin/pip install -q onnxruntime einops sox
 .venv/bin/pip install -q flash-attn --no-build-isolation || echo "flash-attn skipped (optional, saves memory)"
 pkill -f beryl_gpu_server.py || true
 nohup .venv/bin/python beryl_gpu_server.py > beryl.log 2>&1 &

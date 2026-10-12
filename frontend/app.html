@@ -681,6 +681,7 @@ const MicLink = (() => {
       want = true;
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
       ctx = new AudioContext({ sampleRate: 16000 });
+      if (ctx.state !== 'running') { const go = () => ctx && ctx.resume(); addEventListener('pointerdown', go, { once: true }); addEventListener('keydown', go, { once: true }); }
       await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' })));
       node = new AudioWorkletNode(ctx, 'pcm16k');
       node.port.onmessage = (e) => { if (ws && ws.readyState === 1) ws.send(e.data); };
