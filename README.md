@@ -10,7 +10,7 @@ Crane Builder is an IDE-style web app where users describe a website in natural 
 
 | Layer | Tech |
 |-------|------|
-| Frontend | React 18 (CDN UMD) + Babel standalone — single static `index.html`, no build step |
+| Frontend | React 18 (CDN UMD) + Babel standalone — static pages (`index.html` landing, `app.html` builder), no build step |
 | Voice Agent UI | Mic / speaker / end-call controls, canvas waveform (flat line until a voice model is connected), empty transcript |
 | Inference Backend | `berylize-node` — GCP g2-standard-4, NVIDIA L4, us-east1-c |
 | Model | berylize-7b (PyTorch 2.9 + CUDA 12.9, Ubuntu 22.04) |
@@ -20,7 +20,8 @@ Crane Builder is an IDE-style web app where users describe a website in natural 
 ```
 crane-builder-v1/
 ├── frontend/
-│   ├── index.html          # Crane Builder UI — React (chat + preview + voice agent)
+│   ├── index.html          # Crane IT landing page — "Get Shit Done" opens app.html
+│   ├── app.html            # Crane Builder UI — React (chat + preview + voice agent)
 │   ├── uploads/
 │   │   ├── beryl.jpeg      # Beryl voice agent portrait
 │   │   └── hero-bg.jpeg    # Crane IT hero image
@@ -32,11 +33,11 @@ crane-builder-v1/
 
 ## Running locally
 
-Open `frontend/index.html` in a browser — no build step. It loads React and Babel from a CDN, so it needs an internet connection.
+Open `frontend/index.html` (landing) or `frontend/app.html` (builder) in a browser — no build step. It loads React and Babel from a CDN, so it needs an internet connection.
 
 ## Hosting
 
-Deployed as a static Hugging Face Space (`sdk: static`): https://huggingface.co/spaces/AIBRUH/crane-builder-v1 — the Space's `index.html` and `uploads/` mirror `frontend/`.
+Deployed as a static Hugging Face Space (`sdk: static`): https://huggingface.co/spaces/AIBRUH/crane-builder-v1 — the Space mirrors `frontend/` file for file.
 
 ## Roadmap
 
