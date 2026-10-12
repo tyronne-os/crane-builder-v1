@@ -366,6 +366,7 @@ textarea::placeholder { color: var(--fg-5); }
 /* photo card */
 .agent-card { position: relative; flex: 1; min-height: 0; border-radius: 20px; overflow: hidden; background: var(--surface); border: 1px solid var(--border); }
 .agent-card img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 20%; }
+.agent-card .avatar-canvas { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; transition: opacity .5s; }
 .agent-card-overlay { position: absolute; inset: 0; background: linear-gradient(0deg, rgba(9,9,11,.96) 0%, rgba(9,9,11,.3) 50%, rgba(9,9,11,0) 100%); }
 
 /* live badge */
@@ -592,6 +593,51 @@ const FX_PRESETS = {
 const fxKey = (S) => S.voiceEngine + ':' + S.voice;
 const fxFor = (S) => ({ ...FX_DEFAULT, ...((S.voiceFx || {})[fxKey(S)] || FX_PRESETS.samantha) });
 
+// Beryl's live face: frames rendered by FlashHead on the GPU, relayed by the worker. Each sentence's frames are timed from
+// the moment its audio starts, so the canvas shows the frame that matches what is being heard. Silent: a cached idle loop.
+const AvatarLink = (() => {
+  let ws = null, base = '', want = false, retry = null, idle = [], cur = null;
+  const utt = new Map();
+  const wsUrl = (b) => b.replace(/^http/, 'ws').replace(/\/+$/, '') + '/avatar';
+  const bitmap = (bytes) => createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }));
+  const getU = (id) => { let u = utt.get(id); if (!u) { u = { frames: [], ended: false, waiters: [] }; utt.set(id, u); } return u; };
+  const wake = (u) => u.waiters.splice(0).forEach(r => r());
+  const connect = () => {
+    const pending = [];
+    ws = new WebSocket(wsUrl(base)); ws.binaryType = 'arraybuffer';
+    ws.onmessage = async (e) => {
+      if (typeof e.data === 'string') {
+        const m = JSON.parse(e.data);
+        if (m.type === 'face' && m.ready) idle = (await Promise.all(pending)).filter(Boolean);
+        return;
+      }
+      const dv = new DataView(e.data), kind = dv.getUint8(0), id = String(dv.getUint32(1)), len = dv.getUint32(5), t = dv.getFloat32(9);
+      const jpeg = new Uint8Array(e.data, 13, len);
+      if (kind === 1) pending.push(bitmap(jpeg).then(b => ({ t, b })).catch(() => null));
+      else if (kind === 2) { const u = getU(id); bitmap(jpeg).then(b => { u.frames.push({ t, b }); if (u.frames.length > 1 && u.frames[u.frames.length - 2].t > t) u.frames.sort((x, y) => x.t - y.t); wake(u); }).catch(() => {}); }
+      else if (kind === 3) { const u = getU(id); u.ended = true; wake(u); }
+    };
+    ws.onclose = () => { ws = null; if (want) retry = setTimeout(connect, idle.length ? 3000 : 15000); };
+  };
+  return {
+    start(b) { if (want && b === base) return; this.close(); want = true; base = b; connect(); },
+    close() { want = false; clearTimeout(retry); if (ws) { try { ws.close(); } catch (e) {} ws = null; } idle = []; cur = null; utt.clear(); },
+    ready: () => !!(ws && ws.readyState === 1 && idle.length),
+    // Hold the sentence's audio until its first frames exist (or give up after `ms`), so lips and voice start together.
+    waitFirst(id, ms) { return new Promise(res => { const u = getU(id); if (u.frames.length || u.ended) return res(); u.waiters.push(res); setTimeout(res, ms); }); },
+    play(id, start) { cur = id ? { id, start } : null; if (id) for (const k of [...utt.keys()]) if (Number(k) < Number(id)) utt.delete(k); },
+    stop() { cur = null; utt.clear(); },
+    frameAt(audioNow, wallNow) {
+      if (cur) {
+        const u = utt.get(cur.id), el = audioNow - cur.start;
+        if (u && u.frames.length) { let f = u.frames[0]; for (const x of u.frames) { if (x.t <= el) f = x; else break; } return f.b; }
+      }
+      return idle.length ? idle[Math.floor(wallNow * 25) % idle.length].b : null;
+    },
+    stats: () => ({ idle: idle.length, playing: cur ? cur.id : null, utterances: utt.size }),
+  };
+})();
+
 const VoiceOut = (() => {
   let ctx = null, n = null, queue = [], cur = null, gen = 0, pumping = false, speaking = false, said = [], endedAt = 0;
   const subs = new Set(), errs = new Set();
@@ -616,11 +662,11 @@ const VoiceOut = (() => {
   const running = () => ctx.state === 'running' ? Promise.resolve() : Promise.race([ctx.resume(), new Promise(r => setTimeout(r, 300))]).then(() => ctx.state === 'running' ? null :
     new Promise(res => { const go = () => { ctx.resume().then(res); removeEventListener('pointerdown', go); removeEventListener('keydown', go); }; addEventListener('pointerdown', go); addEventListener('keydown', go); }));
   const post = (url, body) => fetch(url.replace(/\/+$/, '') + '/audio/speech', { method: 'POST', headers: { 'Content-Type': 'application/json', ...tunnelHdr(url) }, body: JSON.stringify(body) })
-    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); });
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); const uid = r.headers.get('X-Utterance-Id'); return r.arrayBuffer().then(ab => { ab.uid = uid; return ab; }); });
   const synth = async (text, S, fx) => {
     const kokoro = { model: 'kokoro', voice: S.voiceEngine === 'kokoro' ? S.voice : 'af_heart', input: text, speed: S.voiceSpeed, voice2: fx.blend || '', mix: fx.mix || 0 };
     if (S.voiceEngine === 'qwen3tts') {
-      try { return await post(S.berylUrl, { model: 'qwen3tts', voice: S.voice, input: text }); }
+      try { return await post(S.berylUrl, { model: 'qwen3tts', voice: S.voice, input: text, face: !!S.avatarOn && AvatarLink.ready() }); }
       catch (e) { try { return await post(S.ttsGpuUrl, { model: 'vibevoice', voice: 'en-Emma_woman', input: text, speed: S.voiceSpeed }); }
         catch (e2) { try { return await post(S.ttsUrl, kokoro); } catch (e3) { throw new Error('Beryl voice server (' + S.berylUrl + ') is offline, and so are the VibeVoice and Kokoro fallbacks'); } } }
     }
@@ -637,11 +683,12 @@ const VoiceOut = (() => {
       let buf; try { buf = await it.audio; } catch (e) { errs.forEach(f => f(e)); continue; }
       if (it.gen !== gen) continue;
       await running(); if (it.gen !== gen) continue;
+      if (it.uid) { await AvatarLink.waitFirst(it.uid, 1500); if (it.gen !== gen) continue; }
       retune(it.fx);
       const src = ctx.createBufferSource(); src.buffer = buf; src.detune.value = it.fx.pitch; src.connect(n.low);
       said = said.concat(it.text).slice(-3); setSpeaking(true);
-      await new Promise(res => { src.onended = res; cur = src; src.start(); });
-      cur = null;
+      await new Promise(res => { src.onended = res; cur = src; src.start(); AvatarLink.play(it.uid, ctx.currentTime); });
+      cur = null; AvatarLink.play(null);
       if (queue.length) await new Promise(r => setTimeout(r, 60 + Math.random() * 120));
     }
     pumping = false; setSpeaking(false);
@@ -650,17 +697,31 @@ const VoiceOut = (() => {
     speak(text, S) {
       graph();
       const fx = fxFor(S);
-      const audio = synth(text, S, fx).then(ab => ctx.decodeAudioData(ab));
-      queue.push({ text, fx, audio, gen }); pump();
-      return audio;
+      const it = { text, fx, gen, uid: null };
+      it.audio = synth(text, S, fx).then(ab => { it.uid = ab.uid || null; return ctx.decodeAudioData(ab); });
+      queue.push(it); pump();
+      return it.audio;
     },
-    stop() { gen++; queue = []; if (cur) { try { cur.stop(); } catch (e) {} } setSpeaking(false); },
+    stop() { gen++; queue = []; AvatarLink.stop(); if (cur) { try { cur.stop(); } catch (e) {} } if (n) n.out.gain.setTargetAtTime(1, ctx.currentTime, 0.02); setSpeaking(false); },
+    // Drop her volume the instant the user starts talking; restore it if it turns out to be nothing.
+    duck(on) { if (n) n.out.gain.setTargetAtTime(on ? 0.3 : 1, ctx.currentTime, 0.06); },
+    decode(ab) { graph(); return ctx.decodeAudioData(ab); },
+    // Short acknowledgement ("mm-hm"): quiet, never counts as her taking the floor, and is remembered for the echo guard.
+    playClip(buf, S, text) {
+      graph(); if (ctx.state !== 'running') return;
+      retune(fxFor(S));
+      const src = ctx.createBufferSource(), g = ctx.createGain(); src.buffer = buf; g.gain.value = 0.55; src.connect(g); g.connect(n.low);
+      if (text) said = said.concat(text).slice(-3);
+      if (window.__craneTest) window.__craneTest.clipPlays++;
+      src.start();
+    },
     retune(fx) { retune({ ...FX_DEFAULT, ...fx }); },
     unlock() { graph(); return running(); },
     isSpeaking: () => speaking,
     recent: () => said.join(' '),
     endedAgo: () => Date.now() - endedAt,
     analyser: () => n && n.analyser,
+    clock: () => (ctx ? ctx.currentTime : 0),
     subscribe(f) { subs.add(f); return () => subs.delete(f); },
     onError(f) { errs.add(f); return () => errs.delete(f); },
   };
@@ -668,6 +729,13 @@ const VoiceOut = (() => {
 
 // ngrok's free tier answers browser fetches with a warning page (no CORS headers) unless this header is sent.
 const tunnelHdr = (url) => /ngrok/i.test(url) ? { 'ngrok-skip-browser-warning': '1' } : {};
+window.__avatar = () => AvatarLink.stats();
+const BACKCHANNEL_WORDS = new Set(['mm', 'mmm', 'hm', 'mhm', 'hmm', 'mmhmm', 'uh', 'huh', 'yeah', 'yes', 'yep', 'yup', 'right', 'okay', 'ok', 'sure', 'wow', 'oh', 'ah', 'cool', 'nice', 'true', 'totally', 'exactly', 'gotcha', 'interesting']);
+// "mm-hm", "yeah", "oh wow": the user nodding along, not taking the floor.
+const isBackchannelText = (t) => { const w = (t.toLowerCase().match(/[a-z']+/g) || []); return w.length > 0 && w.length <= 3 && w.every(x => BACKCHANNEL_WORDS.has(x)); };
+// What a piece of heard speech should do right now: 'turn' (normal), 'ignore' (nodding along or barge-in off), 'interrupt' (cut her off).
+const bargeDecision = (heard, speaking, bargeIn) => !speaking ? 'turn' : isBackchannelText(heard) || !bargeIn ? 'ignore' : 'interrupt';
+window.__craneTest = { bargeDecision, isBackchannelText, clipPlays: 0, avatarDrawn: 0 };
 const MicLink = (() => {
   let ws = null, stream = null, ctx = null, node = null, want = false, retry = null;
   const WORKLET = 'class P extends AudioWorkletProcessor{constructor(){super();this.b=[]}process(i){const c=i[0]&&i[0][0];if(c){for(let k=0;k<c.length;k++)this.b.push(c[k]);if(this.b.length>=1600){const o=new Int16Array(this.b.length);for(let k=0;k<o.length;k++){const s=Math.max(-1,Math.min(1,this.b[k]));o[k]=s*32767}this.port.postMessage(o.buffer,[o.buffer]);this.b=[]}}return true}}registerProcessor("pcm16k",P)';
@@ -675,7 +743,7 @@ const MicLink = (() => {
   const connect = (base, lang, h) => {
     ws = new WebSocket(wsUrl(base)); ws.binaryType = 'arraybuffer';
     ws.onopen = () => { ws.send(JSON.stringify({ type: 'config', lang })); h.onStatus(''); };
-    ws.onmessage = (e) => { try { const m = JSON.parse(e.data); if (m.type === 'partial' || m.type === 'final') h.onText(m.text, m.type === 'final'); } catch (err) {} };
+    ws.onmessage = (e) => { try { const m = JSON.parse(e.data); if (m.type === 'partial' || m.type === 'final') h.onText(m.text, m.type === 'final'); else if (h.onEvent) h.onEvent(m); } catch (err) {} };
     ws.onclose = () => { if (!want) return; h.onStatus('Listening server offline (' + base + '), retrying…'); retry = setTimeout(() => want && connect(base, lang, h), 2000); };
   };
   return {
@@ -785,7 +853,7 @@ const DEFAULT_SETTINGS = {
   gpuBase: CFG.base, defaultModel: '', temperature: 0.4, maxTokens: 2048, stream: true, systemExtra: '', allowCss: true, allowJs: true,
   defaultMode: 'builder', autoSwitch: true, imgApi: 'https://api-inference.huggingface.co/models/Qwen/Qwen-Image-2.1', vidApi: 'https://api-inference.huggingface.co/models/Lightricks/LTX-2.5', clipSeconds: 8, autoStitch: true,
   agentName: 'Beryl', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'qwen3tts', voice: 'beryl', voiceSpeed: 1.0, ttsUrl: 'http://127.0.0.1:8880/v1', ttsGpuUrl: 'http://127.0.0.1:8881/v1', autoSpeak: true, micMode: 'toggle',
-  userName: '', vernacular: '', liveGreet: true, bargeIn: true, webResearch: true, listenLang: 'English', berylUrl: 'http://127.0.0.1:8882/v1', voiceTemp: 0.8, voiceV: 2, voiceFx: {},
+  userName: '', vernacular: '', liveGreet: true, bargeIn: true, avatarOn: true, webResearch: true, listenLang: 'English', berylUrl: 'http://127.0.0.1:8882/v1', voiceTemp: 0.8, voiceV: 2, voiceFx: {},
   nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU',
   accent: '#eeca50', fontScale: 1, showAgent: true,
   cuEnabled: true, cuUrl: 'http://127.0.0.1:8765', cuToken: '', cuConfirm: true,
@@ -997,6 +1065,7 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
             {s.voiceEngine === 'kokoro' && fx.blend && rng('Blend amount', 'mix', 0, 1, 0.05)}
             <Field label="Start talking when Crane opens" hint="She greets you and starts listening">{tog('liveGreet')}</Field>
             <Field label="Let me interrupt her" hint="Talking over her stops her mid-sentence. Headphones work best.">{tog('bargeIn')}</Field>
+            <Field label="Live face" hint="Her portrait talks, rendered by FlashHead on your GPU (needs the face service). Off: still photo.">{tog('avatarOn')}</Field>
             <Field label="Speak replies to typed messages">{tog('autoSpeak')}</Field>
             <Field label="Web research" hint="Google, HF papers/spaces/models, GitHub, NVIDIA">{tog('webResearch')}</Field>
             <Field label="Beryl GPU server" hint="Qwen3-ASR listening + Qwen3-TTS voice + brain. Paste the URL your Kaggle notebook prints (https://…ngrok…/k/<secret>/v1); local default is http://127.0.0.1:8882/v1">{inp('berylUrl')}</Field>
@@ -1064,6 +1133,29 @@ const INITIAL_MSGS = [];
 
 function CodePane() {
   return <pre className="code-pane"></pre>;
+}
+
+function AvatarCanvas() {
+  const ref = useRef(null);
+  useEffect(() => {
+    let raf;
+    const c = ref.current, g = c.getContext('2d');
+    const draw = () => {
+      const b = AvatarLink.frameAt(VoiceOut.clock(), performance.now() / 1000);
+      if (b) {
+        const dpr = window.devicePixelRatio || 1, w = Math.round(c.clientWidth * dpr), h = Math.round(c.clientHeight * dpr);
+        if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+        const s = Math.max(w / b.width, h / b.height), dw = b.width * s, dh = b.height * s;
+        g.drawImage(b, (w - dw) / 2, (h - dh) * 0.2, dw, dh);
+        c.style.opacity = '1';
+        if (window.__craneTest) window.__craneTest.avatarDrawn++;
+      } else c.style.opacity = '0';
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return <canvas ref={ref} className="avatar-canvas" />;
 }
 
 function VoiceCanvas() {
@@ -1221,7 +1313,7 @@ function App() {
   const refFileRef = useRef(null);
   const vidClips = useRef([]);
   const sref = useRef(S); sref.current = S;
-  const liveRef = useRef(false), cutRef = useRef(''), sendRef = useRef(null), abortRef = useRef(null), busyRef = useRef(false), greetedRef = useRef(false);
+  const liveRef = useRef(false), cutRef = useRef(''), duckRef = useRef(null), clipsRef = useRef({}), sendRef = useRef(null), abortRef = useRef(null), busyRef = useRef(false), greetedRef = useRef(false);
   const [speaking, setSpeaking] = useState(false);
   const [interim, setInterim] = useState('');
   const [said, setSaid] = useState('');
@@ -1324,6 +1416,13 @@ function App() {
     VoiceOut.stop(); if (abortRef.current) abortRef.current.abort();
     setMicOn(false); setInterim(''); setVoiceState('idle');
   };
+  const playBackchannel = (kind) => {
+    const base = sref.current.berylUrl.replace(/\/+$/, ''), url = base + '/backchannel/' + kind;
+    let p = clipsRef.current[kind];
+    if (!p) { p = clipsRef.current[kind] = fetch(url, { headers: tunnelHdr(url) }).then(r => r.ok ? r.arrayBuffer() : Promise.reject(new Error('clip ' + r.status))).then(ab => VoiceOut.decode(ab)); p.catch(() => { delete clipsRef.current[kind]; }); }
+    p.then(buf => VoiceOut.playClip(buf, sref.current, kind)).catch(() => {});
+  };
+  useEffect(() => { if (S.avatarOn) AvatarLink.start(S.berylUrl); else AvatarLink.close(); }, [S.avatarOn, S.berylUrl]);
   const startLive = () => {
     VoiceOut.unlock();
     const onText = (heard, final) => {
@@ -1331,12 +1430,21 @@ function App() {
       // Her own voice leaking from the speakers must not count as the user talking.
       const echoWindow = VoiceOut.isSpeaking() || VoiceOut.endedAgo() < 1500;
       if (echoWindow && isEcho(heard, VoiceOut.recent())) return;
-      if (VoiceOut.isSpeaking()) { if (!sref.current.bargeIn) return; cutRef.current = VoiceOut.recent(); VoiceOut.stop(); if (abortRef.current) abortRef.current.abort(); }
+      const act = bargeDecision(heard, VoiceOut.isSpeaking(), sref.current.bargeIn);
+      clearTimeout(duckRef.current); VoiceOut.duck(false);
+      if (act === 'ignore') return;
+      if (act === 'interrupt') { cutRef.current = VoiceOut.recent(); VoiceOut.stop(); if (abortRef.current) abortRef.current.abort(); }
       if (final) { setInterim(''); sendRef.current(heard, { voice: true }); } else setInterim(heard);
+    };
+    const onEvent = (m) => {
+      if (!liveRef.current) return;
+      if (m.type === 'speech' && m.state === 'start' && VoiceOut.isSpeaking() && sref.current.bargeIn) {
+        VoiceOut.duck(true); clearTimeout(duckRef.current); duckRef.current = setTimeout(() => VoiceOut.duck(false), 900);
+      } else if (m.type === 'backchannel' && !VoiceOut.isSpeaking() && !busyRef.current) playBackchannel(m.kind);
     };
     liveRef.current = true; setMicOn(true); setVoiceErr(''); setVoiceState('listening');
     greet();
-    MicLink.start(sref.current.berylUrl, sref.current.listenLang, { onText, onStatus: setVoiceErr }).catch(e => {
+    MicLink.start(sref.current.berylUrl, sref.current.listenLang, { onText, onEvent, onStatus: setVoiceErr }).catch(e => {
       setVoiceErr(e.name === 'NotAllowedError' ? 'Microphone blocked: allow it in the address bar' : 'Microphone unavailable: ' + e.message);
       stopLive();
     });
@@ -1691,6 +1799,7 @@ function App() {
 
       <div className="agent-card">
         <img src="uploads/beryl.jpeg" alt="Beryl — Voice Agent" />
+        <AvatarCanvas />
         <div className="agent-card-overlay"></div>
 
         <div className="live-badge-pill">
