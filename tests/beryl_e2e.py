@@ -10,16 +10,22 @@ import numpy as np, uvicorn
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'scripts'))
 import beryl_gpu_server as B
+import beryl_turns as T
 from playwright.sync_api import sync_playwright
 
 TOKEN = 'sekret-token-123'
-calls = {'transcribe': [], 'speak': [], 'brain': []}
+calls = {'transcribe': [], 'speak': [], 'brain': [], 'clips': []}
 
 
 class FakeModels:
     def transcribe(self, audio, lang):
-        calls['transcribe'].append((round(len(audio) / 16000, 2), lang))
-        return 'build me' if len(audio) < 16000 * 1.2 else 'build me a landing page'
+        s = len(audio) / 16000
+        calls['transcribe'].append((round(s, 2), lang))
+        return 'build me' if s < 1.2 else 'build me a landing page,' if s < 3.0 else 'build me a landing page, in gold.'
+
+    def clip(self, kind):
+        calls['clips'].append(kind)
+        return (0.3 * np.sin(np.linspace(0, 300, 9600)).astype(np.float32), 24000) if kind in T.BACKCHANNELS else None
 
     def speak(self, text):
         calls['speak'].append(text)
@@ -46,12 +52,14 @@ class FakeOllama(http.server.BaseHTTPRequestHandler):
 os.environ['OLLAMA_URL'] = 'http://127.0.0.1:11434/v1'
 B.OLLAMA_URL = os.environ['OLLAMA_URL']
 threading.Thread(target=http.server.ThreadingHTTPServer(('127.0.0.1', 11434), FakeOllama).serve_forever, daemon=True).start()
+B.TurnTaker = lambda: T.TurnTaker(seed=2, backchannel_after_s=1.0, backchannel_chance=1.0)
 threading.Thread(target=lambda: uvicorn.run(B.make_app(FakeModels(), token=TOKEN), host='127.0.0.1', port=8882, log_level='warning'), daemon=True).start()
 web = subprocess.Popen([sys.executable, '-m', 'http.server', '8000', '-d', os.path.join(ROOT, 'frontend')], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 sr = 48000
 rng = np.random.default_rng(0)
-mic = np.concatenate([0.001 * rng.standard_normal(sr * 3), 0.3 * rng.standard_normal(int(sr * 2.5)) * np.abs(np.sin(np.linspace(0, 40, int(sr * 2.5)))), 0.001 * rng.standard_normal(sr * 4)])
+def burst(sec): return 0.3 * rng.standard_normal(int(sr * sec)) * np.abs(np.sin(np.linspace(0, 40, int(sr * sec))))
+mic = np.concatenate([0.001 * rng.standard_normal(sr * 3), burst(2.0), 0.001 * rng.standard_normal(int(sr * 0.55)), burst(2.0), 0.001 * rng.standard_normal(sr * 4)])
 with wave.open('/tmp/mic.wav', 'wb') as w:
     w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr); w.writeframes((np.clip(mic, -1, 1) * 32767).astype(np.int16).tobytes())
 time.sleep(1.5)
@@ -119,6 +127,15 @@ with sync_playwright() as p:
     check('spoken turn uses conversation warmth 0.8', calls['brain'][0]['temperature'] == 0.8)
     check('greeting and reply spoken by Qwen3-TTS', len(calls['speak']) >= 2 and any('Let me start on that' in s for s in calls['speak']))
     check('browser speech synthesis never used', pg.evaluate('window.__tts') == 0)
+    check('mid-sentence pause was answered with a backchannel clip from the worker', bool(calls['clips']))
+    check('the clip was played in the browser, quietly', pg.evaluate('window.__craneTest.clipPlays') >= 1)
+    check('the nod did not cut the turn in two: one brain request for the whole sentence', len(calls['brain']) == 1 and 'in gold' in pg.locator('.msg.me').first.inner_text())
+    bd = lambda h, sp, bi: pg.evaluate('([h, s, b]) => window.__craneTest.bargeDecision(h, s, b)', [h, sp, bi])
+    check('user says "mm-hm" while she talks: she keeps talking', bd('Mm-hm.', True, True) == 'ignore' and bd('yeah, right', True, True) == 'ignore' and bd('Oh wow', True, True) == 'ignore')
+    check('user says something real while she talks: she stops', bd('wait, can you make it bigger', True, True) == 'interrupt' and bd('no', True, True) == 'interrupt')
+    check('barge-in off: she never stops', bd('wait, stop', True, False) == 'ignore')
+    check('she is not talking: everything is a normal turn', bd('mm-hm', False, True) == 'turn' and bd('build me a page', False, True) == 'turn')
+    check('four-word yeah-yeah-yeah-yeah is a real sentence, not a nod', bd('yeah yeah yeah yeah', True, True) == 'interrupt')
     pg.click('.btn-admin'); pg.locator('.adm-nav-item', has_text='Voice Agent').click()
     check('admin shows the Beryl GPU server field', pg.locator('text=Beryl GPU server').count() == 1)
     check('no page errors', not errs)
