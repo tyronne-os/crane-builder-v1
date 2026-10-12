@@ -1139,10 +1139,12 @@ function CodePane() {
   return <pre className="code-pane"></pre>;
 }
 
-function AvatarStatus() {
+function AvatarStatus({ corner }) {
   const [st, setSt] = useState('');
   useEffect(() => { const t = setInterval(() => setSt(AvatarLink.stats().state), 1000); return () => clearInterval(t); }, []);
-  return <div style={{ marginTop: 4, fontSize: 12, color: st.startsWith('ready') ? '#7bd88f' : '#eeca50' }}>Face link: {st}</div>;
+  const color = st.startsWith('ready') ? '#7bd88f' : '#eeca50';
+  if (corner) return st && st !== 'off' ? <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 6, maxWidth: '90%', padding: '3px 8px', borderRadius: 8, background: 'rgba(0,0,0,.65)', fontSize: 11, color }}>Face: {st}</div> : null;
+  return <div style={{ marginTop: 4, fontSize: 12, color }}>Face link: {st}</div>;
 }
 
 function AvatarCanvas() {
@@ -1810,6 +1812,7 @@ function App() {
       <div className="agent-card">
         <img src="uploads/beryl.jpeg" alt="Beryl — Voice Agent" />
         <AvatarCanvas />
+        <AvatarStatus corner />
         <div className="agent-card-overlay"></div>
 
         <div className="live-badge-pill">
