@@ -535,6 +535,10 @@ const HF_DIFFUSION_MODELS = [
   { id: 'Lightricks/LTX-2.5',             label: 'LTX-2.5',                   tag: 'HF · video' },
 ];
 
+const HF_CHAT_MODELS = [
+  { id: 'Qwen2.5-Coder-1.5B-Instruct-abliterated', label: 'Qwen2.5-Coder-1.5B · Uncensored', tag: 'HF · CPU', base: 'https://aibruh-berylize-api.hf.space/v1' },
+];
+
 const VOICE_ENGINES = {
   kokoro: { label: 'Kokoro-82M', size: '82M · 330 MB', path: '/opt/berylize/small-models/voice/kokoro-82m', voices: [
     ['af_heart','Heart · US · warm (A)'], ['af_bella','Bella · US · bright (A-)'], ['af_nicole','Nicole · US · soft/ASMR'],
@@ -977,6 +981,13 @@ function App() {
                   {(models.length ? models : [model]).map(id => (
                     <button key={id} onClick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-2)', gap: '8px' }}>
                       <span>{short(id)}</span><span style={{fontSize:'9px',color:'var(--fg-5)',flexShrink:0}}>{S.nodeName}</span>
+                    </button>
+                  ))}
+                  <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
+                  <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>SMALL MODELS · HF API</div>
+                  {HF_CHAT_MODELS.map(({id, label, tag, base}) => (
+                    <button key={id} onClick={() => { setModel(id); setSetting('apiBase', base); setMenuOpen(false); }} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-2)', gap: '8px' }}>
+                      <span>{label}</span><span style={{fontSize:'9px',color:'#f59e0b',flexShrink:0}}>CPU</span>
                     </button>
                   ))}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
