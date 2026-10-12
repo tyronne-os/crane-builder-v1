@@ -23,6 +23,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
+from beryl_turns import Segmenter, TurnTaker
+
 PORT = int(os.environ.get("BERYL_PORT", "8882"))
 DEVICE = os.environ.get("BERYL_DEVICE", "cuda:0")
 TOKEN = os.environ.get("BERYL_TOKEN", "")
@@ -52,7 +54,6 @@ ORIGINS = [
     "http://127.0.0.1:8000",
 ]
 SR = 16000
-FRAME = SR // 50  # 20 ms
 
 
 class Speech(BaseModel):
@@ -62,40 +63,23 @@ class Speech(BaseModel):
     speed: float = 1.0
 
 
-class Segmenter:
-    """Energy voice detection: turns a PCM stream into utterances, with partial snapshots while you talk."""
+def trim_silence(wav, sr, lead_ms=70, trail_ms=140):
+    """TTS output starts with dead air (measured 0.64 s on the real model). Cut it to a natural breath."""
+    y = np.asarray(wav, dtype=np.float32)
+    hop = max(1, sr // 100)
+    n = len(y) // hop
+    if n < 3:
+        return y
+    rms = np.sqrt(np.mean(y[: n * hop].reshape(n, hop) ** 2, axis=1))
+    live = np.where(rms > 0.04 * rms.max())[0]
+    if len(live) == 0:
+        return y
+    a = max(0, live[0] * hop - int(sr * lead_ms / 1000))
+    b = min(len(y), (live[-1] + 1) * hop + int(sr * trail_ms / 1000))
+    return y[a:b]
 
-    def __init__(self, start_ms=60, end_ms=int(os.environ.get("BERYL_END_SILENCE_MS", "700")),
-                 preroll_ms=300, partial_ms=600, max_s=20):
-        self.start_n, self.end_n = start_ms // 20, end_ms // 20
-        self.preroll, self.partial_n, self.max_n = preroll_ms // 20, partial_ms // 20, max_s * 50
-        self.floor, self.pending = 0.003, np.zeros(0, np.float32)
-        self.ring, self.utt, self.talking, self.loud, self.quiet, self.since = [], [], False, 0, 0, 0
 
-    def feed(self, pcm):
-        """Yields ("partial", audio) and ("final", audio) events."""
-        self.pending = np.concatenate([self.pending, pcm])
-        while len(self.pending) >= FRAME:
-            f, self.pending = self.pending[:FRAME], self.pending[FRAME:]
-            rms = float(np.sqrt(np.mean(f * f)))
-            voiced = rms > max(self.floor * 3.0, 0.008)
-            if not self.talking:
-                self.floor = 0.95 * self.floor + 0.05 * min(rms, 0.05) if not voiced else self.floor
-                self.ring = (self.ring + [f])[-self.preroll:]
-                self.loud = self.loud + 1 if voiced else 0
-                if self.loud >= self.start_n:
-                    self.talking, self.utt, self.quiet, self.since = True, list(self.ring), 0, 0
-                continue
-            self.utt.append(f)
-            self.quiet = 0 if voiced else self.quiet + 1
-            self.since += 1
-            if self.quiet >= self.end_n or len(self.utt) >= self.max_n:
-                audio = np.concatenate(self.utt)
-                self.talking, self.utt, self.ring, self.loud = False, [], [], 0
-                yield "final", audio
-            elif self.since >= self.partial_n:
-                self.since = 0
-                yield "partial", np.concatenate(self.utt)
+BACKCHANNEL_TEXT = {"mm-hm": "Mm-hm.", "yeah": "Yeah.", "right": "Right.", "okay": "Okay.", "mm": "Mm.", "oh": "Oh."}
 
 
 def _dtype():
@@ -111,7 +95,8 @@ class Models:
     def __init__(self):
         self.lock = threading.Lock()
         self.asr = self.tts = self.prompt = None
-        self.ready = {"ears": False, "voice": False}
+        self.ready = {"ears": False, "voice": False, "clips": False}
+        self.clips = {}
         self.error = ""
 
     def _load_asr(self):
@@ -153,7 +138,10 @@ class Models:
         with self.lock:
             self._load_tts()
             wavs, sr = self.tts.generate_voice_clone(text=text, language="English", voice_clone_prompt=self.prompt)
-        return wavs[0], sr
+        return trim_silence(wavs[0], sr), sr
+
+    def clip(self, kind):
+        return self.clips.get(kind)
 
     def warm(self):
         """Load everything and run one throwaway sentence and one throwaway listen, so kernels are compiled and cached."""
@@ -162,6 +150,9 @@ class Models:
             self.ready["ears"] = True
             self.speak("Okay.")
             self.ready["voice"] = True
+            for kind, text in BACKCHANNEL_TEXT.items():
+                self.clips[kind] = self.speak(text)
+            self.ready["clips"] = True
         except Exception as e:  # surfaced through /health instead of dying silently
             self.error = f"{type(e).__name__}: {e}"
 
@@ -188,8 +179,8 @@ def make_app(models=None, token=None):
 
     async def health(tok: str = ""):
         guard(tok)
-        ready = getattr(models, "ready", {"ears": True, "voice": True})
-        return {"ok": True, "ready": all(ready.values()), "ears_ready": ready["ears"], "voice_ready": ready["voice"],
+        ready = getattr(models, "ready", {"ears": True, "voice": True, "clips": True})
+        return {"ok": True, "ready": all(ready.values()), "ears_ready": ready["ears"], "voice_ready": ready["voice"], "clips_ready": ready["clips"],
                 "error": getattr(models, "error", ""), "asr": ASR_MODEL, "tts": TTS_MODEL, "profile": "lean" if LEAN else "full"}
 
     async def speech(req: Speech, tok: str = ""):
@@ -201,6 +192,16 @@ def make_app(models=None, token=None):
         buf = io.BytesIO()
         sf.write(buf, np.asarray(audio, dtype=np.float32), sr, format="WAV", subtype="PCM_16")
         return Response(buf.getvalue(), media_type="audio/wav")
+
+    async def backchannel(kind: str, tok: str = ""):
+        guard(tok)
+        item = models.clip(kind)
+        if item is None:
+            raise HTTPException(404, "clip not ready")
+        audio, sr = item
+        buf = io.BytesIO()
+        sf.write(buf, np.asarray(audio, dtype=np.float32), sr, format="WAV", subtype="PCM_16")
+        return Response(buf.getvalue(), media_type="audio/wav", headers={"Cache-Control": "max-age=3600"})
 
     async def llm_models(tok: str = ""):
         guard(tok)
@@ -235,7 +236,15 @@ def make_app(models=None, token=None):
             await ws.close(code=1008)
             return
         await ws.accept()
-        seg, lang, busy = Segmenter(), "English", False
+        seg, taker, lang = Segmenter(), TurnTaker(), "English"
+        fed = 0
+
+        async def send(obj):
+            await ws.send_text(json.dumps(obj))
+
+        async def hear(audio):
+            return await asyncio.to_thread(models.transcribe, audio, lang)
+
         try:
             while True:
                 msg = await ws.receive()
@@ -247,16 +256,29 @@ def make_app(models=None, token=None):
                         lang = None if cfg.get("lang") in (None, "", "auto") else cfg["lang"]
                     continue
                 pcm = np.frombuffer(msg.get("bytes") or b"", dtype=np.int16).astype(np.float32) / 32768.0
-                for kind, audio in seg.feed(pcm):
-                    if kind == "partial" and busy:
-                        continue
-                    busy = True
-                    try:
-                        text = await asyncio.to_thread(models.transcribe, audio, lang)
-                    finally:
-                        busy = False
-                    if text:
-                        await ws.send_text(json.dumps({"type": kind, "text": text}))
+                for ev in seg.feed(pcm):
+                    kind = ev[0]
+                    fed_s = (fed + len(pcm)) / SR
+                    if kind == "start":
+                        await send({"type": "speech", "state": "start"})
+                    elif kind == "partial":
+                        text = await hear(ev[1])
+                        if text:
+                            await send({"type": "partial", "text": text})
+                    elif kind == "pause":
+                        text = await hear(ev[1])
+                        decision = taker.decide(text, seg.utterance_seconds, fed_s)
+                        seg.set_hold(decision["hold_ms"])
+                        if text:
+                            await send({"type": "partial", "text": text, "hold_ms": decision["hold_ms"]})
+                        if decision["backchannel"]:
+                            await send({"type": "backchannel", "kind": decision["backchannel"]})
+                    elif kind == "final":
+                        text = await hear(ev[1])
+                        await send({"type": "speech", "state": "end"})
+                        if text:
+                            await send({"type": "final", "text": text})
+                fed += len(pcm)
         except WebSocketDisconnect:
             pass
 
@@ -268,6 +290,7 @@ def make_app(models=None, token=None):
     for prefix in ("", "/k/{tok}"):
         app.add_api_route(prefix + "/health", health, methods=["GET"])
         app.add_api_route(prefix + "/v1/audio/speech", speech, methods=["POST"])
+        app.add_api_route(prefix + "/v1/backchannel/{kind}", backchannel, methods=["GET"])
         app.add_api_route(prefix + "/v1/models", llm_models, methods=["GET"])
         app.add_api_route(prefix + "/v1/chat/completions", llm_chat, methods=["POST"])
         app.add_api_websocket_route(prefix + "/v1/listen", listen)
