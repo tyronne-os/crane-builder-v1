@@ -479,6 +479,15 @@ textarea::placeholder { color: var(--fg-5); }
 .adm-btn { height:32px; padding:0 14px; border-radius:8px; background:var(--surface2); border:1px solid var(--border-mid); color:var(--fg-2); font:600 11px 'Geist',sans-serif; letter-spacing:.04em; cursor:pointer; display:inline-flex; align-items:center; }
 .adm-btn.gold { background:var(--gold-grad); color:#1a1204; border-color:rgba(255,236,170,.5); }
 .adm-btn.danger { color:#fca5a5; border-color:rgba(220,38,38,.4); }
+.mrow { display:flex; align-items:center; gap:8px; width:100%; text-align:left; padding:7px 10px; border-radius:7px; border:none; background:transparent; font:400 11px 'Geist Mono',monospace; cursor:pointer; }
+.mrow:hover { background:var(--surface); }
+.mrow .mname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mrow .mtag { font-size:9px; flex-shrink:0; }
+.medit { width:20px; height:20px; display:grid; place-items:center; border-radius:5px; color:var(--fg-4); opacity:0; flex-shrink:0; transition:opacity .12s; }
+.mrow:hover .medit, .medit.has { opacity:1; }
+.medit.has { color:var(--gold); }
+.medit:hover { background:var(--surface2); color:var(--gold); }
+.prof-rows { grid-column:1/-1; display:flex; flex-direction:column; gap:2px; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:11px; }
 .adm-list { grid-column:1/-1; font:400 11px 'Geist Mono',monospace; color:var(--fg-4); display:flex; flex-direction:column; gap:4px; }
 @media (max-width: 720px) { .adm { grid-template-columns:1fr; grid-template-rows:auto minmax(0,1fr); } .adm-nav { flex-direction:row; overflow-x:auto; } .adm-nav-item small, .adm-title, .adm-node { display:none; } }
 
@@ -520,7 +529,9 @@ You can change this page's design live. When the user asks for a visual change, 
 Page structure: .app > header.header (.logo > .logo-c .logo-rane .logo-tag, .divider-v, .btn-project, .btn-new, .header-spacer, .tab-group > .tab, .status-pill > .status-dot, .btn-ship) and .body-grid with three columns. Left: aside.chat-sidebar (.messages > .msg.me/.msg.bot > .msg-meta .msg-bubble .msg-steps > .step; .composer-wrap > .composer > textarea + .composer-row > .tool-btn, .model-chip, .composer-spacer, .btn-mic, .btn-send). Center: main.main-panel (.url-bar > .url-text .live-badge; .preview-frame > .idle-state > .idle-icon .idle-title .idle-sub .idle-pulse, or .code-pane). Right: aside.agent-sidebar (.agent-card > img, .agent-card-overlay, .live-badge-pill, .voice-overlay > .agent-name .agent-role, .voice-canvas-wrap > .voice-canvas-label, canvas; .agent-controls > .ctrl-btn; .transcript-strip > .transcript-label).
 CSS variables on :root: --bg #09090b, --surface #111113, --surface2 #18181b, --border, --border-mid, --fg, --fg-2..--fg-5 (text greys), --gold #eeca50, --gold-dim #c6a23a, --gold-dark #6c4a08, --gold-grad, --gold-chrome, --green #34d399, --red #dc2626. Fonts: Geist (UI), Geist Mono (labels), Instrument Serif (accents).
 
-You can also operate the user's computer. When the user asks you to do something on their computer (open an app or website, type, press keys, click), reply with one short sentence and ONE fenced computer block holding a JSON array of actions. Allowed actions: {"do":"open","target":"https://… or an app/file path"}, {"do":"type","text":"…"}, {"do":"key","keys":"ctrl+s"}, {"do":"click","x":100,"y":200}, {"do":"scroll","amount":-5}, {"do":"wait","s":1}, {"do":"screenshot"}. Example: \`\`\`computer\n[{"do":"open","target":"notepad"},{"do":"wait","s":1},{"do":"type","text":"hello"}]\n\`\`\``;
+You can also operate the user's computer. When the user asks you to do something on their computer (open an app or website, type, press keys, click), reply with one short sentence and ONE fenced computer block holding a JSON array of actions. Allowed actions: {"do":"open","target":"https://… or an app/file path"}, {"do":"type","text":"…"}, {"do":"key","keys":"ctrl+s"}, {"do":"click","x":100,"y":200}, {"do":"scroll","amount":-5}, {"do":"wait","s":1}, {"do":"screenshot"}. If the user asks to change your persona, personality, name, tone or standing instructions, reply with one short sentence and ONE fenced profile block holding JSON with only the fields to change: {"persona":"…","instructions":"…","temperature":0.7}. It is saved to your model profile and used from the next message on.
+
+Computer example: \`\`\`computer\n[{"do":"open","target":"notepad"},{"do":"wait","s":1},{"do":"type","text":"hello"}]\n\`\`\``;
 
 const short = (id) => id.replace(/^hf\.co\/[^/]+\//, '').replace(/-GGUF/i, '');
 const PATCH_KEY = 'crane.patches';
@@ -562,7 +573,74 @@ const DEFAULT_SETTINGS = {
   nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU',
   accent: '#eeca50', fontScale: 1, showAgent: true,
   cuEnabled: true, cuUrl: 'http://127.0.0.1:8765', cuToken: '', cuConfirm: true,
+  profiles: {},
 };
+
+const Q3 = '"'.repeat(3);
+const profKind = (key) => key.startsWith('voice:') ? 'voice' : HF_DIFFUSION_MODELS.some(d => d.id === key) ? 'diffusion' : 'chat';
+const isGpuModel = (key) => profKind(key) === 'chat' && !HF_CHAT_MODELS.some(h => h.id === key);
+const profLabel = (key) => key.startsWith('voice:') ? VOICE_ENGINES[key.slice(6)].label : short(key);
+const bakedName = (key) => 'crane-' + short(key).toLowerCase().replace(/[^a-z0-9.]+/g, '-').replace(/^-|-$/g, '');
+const withProfile = (prompt, p) => [p && p.persona, prompt, p && p.instructions].filter(x => x && x.trim()).join(', ');
+const modelfileText = (key, p) => 'FROM ' + key + '\n' + (p.temperature !== '' && p.temperature != null ? 'PARAMETER temperature ' + p.temperature + '\n' : '') + 'SYSTEM ' + Q3 + [p.persona, p.instructions].filter(Boolean).join('\n\n') + Q3;
+
+function PencilIcon() { return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>; }
+
+function ModelRow({ id, label, tag, tagColor, active, hasProfile, onPick, onEdit }) {
+  return (
+    <div className="mrow" role="button" onClick={onPick} style={{ color: active ? 'var(--gold)' : 'var(--fg-2)' }}>
+      <span className="mname">{label}</span>
+      {tag ? <span className="mtag" style={{ color: tagColor || 'var(--fg-5)' }}>{tag}</span> : null}
+      <span className={'medit' + (hasProfile ? ' has' : '')} title={'Persona & instructions for ' + label} onClick={e => { e.stopPropagation(); onEdit(id); }}><PencilIcon /></span>
+    </div>
+  );
+}
+
+function ProfileEditor({ id, profile, gpuBase, onSave, onClose }) {
+  const kind = profKind(id);
+  const [p, setP] = useState(() => ({ persona: '', instructions: '', temperature: '', negative: '', replace: false, ...profile }));
+  const [msg, setMsg] = useState('');
+  const upd = (k, v) => setP(o => ({ ...o, [k]: v }));
+  const area = (k, rows, ph) => <textarea className="adm-input" rows={rows} value={p[k]} placeholder={ph} onChange={e => upd(k, e.target.value)} />;
+  const bake = async () => {
+    setMsg('Writing model file to the GPU…');
+    try {
+      const root = gpuBase.replace(/\/+$/, '').replace(/\/v1$/, '');
+      const body = { model: bakedName(id), from: id, system: [p.persona, p.instructions].filter(Boolean).join('\n\n'), stream: false };
+      if (p.temperature !== '') body.parameters = { temperature: Number(p.temperature) };
+      const r = await fetch(root + '/api/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const t = await r.text();
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + t.slice(0, 120));
+      setMsg('✓ Saved on the GPU as "' + bakedName(id) + '" — it now appears in the model list.');
+    } catch (e) { setMsg('✕ ' + e.message + ' — is the tunnel + proxy running?'); }
+  };
+  return (
+    <div className="adm-backdrop" style={{ zIndex: 110 }} onClick={onClose}>
+      <div className="adm" style={{ gridTemplateColumns: '1fr', maxWidth: '640px' }} onClick={e => e.stopPropagation()}>
+        <section className="adm-body">
+          <div className="adm-head">
+            <div><h2>{profLabel(id)}</h2><p>{kind === 'chat' ? 'Persona, custom instructions and model file' : kind === 'diffusion' ? 'Style persona and generation instructions' : 'How the agent speaks when you use voice'}</p></div>
+            <button className="adm-close" onClick={onClose} title="Close">✕</button>
+          </div>
+          <div className="adm-grid" style={{ gridTemplateColumns: '1fr' }}>
+            <Field label={kind === 'diffusion' ? 'Style persona (put before every prompt)' : 'Persona'} hint={kind === 'chat' ? 'Who this model is: name, personality, tone' : undefined}>{area('persona', 3, kind === 'diffusion' ? 'cinematic, 35mm film, moody gold lighting' : 'You are Beryl, a confident, witty senior engineer…')}</Field>
+            <Field label={kind === 'diffusion' ? 'Instructions (put after every prompt)' : 'Custom instructions'}>{area('instructions', 5, kind === 'diffusion' ? 'high detail, no text, 16:9' : 'Always answer in under 5 sentences. Prefer Tailwind…')}</Field>
+            {kind === 'diffusion' && <Field label="Negative prompt">{area('negative', 2, 'blurry, watermark, extra fingers')}</Field>}
+            {kind === 'chat' && <Field label="Temperature override" hint="Leave blank to use the global setting"><input className="adm-input" type="number" step="0.05" min="0" max="2" value={p.temperature} onChange={e => upd('temperature', e.target.value)} /></Field>}
+            {kind === 'chat' && <Field label="Replace built-in prompt entirely" hint="On: only your persona + instructions are sent. Off: they are added to Beryl's built-in prompt, which keeps live restyling and computer use working"><Toggle on={p.replace} onChange={v => upd('replace', v)} /></Field>}
+            {kind === 'chat' && <Field label="Model file" hint={isGpuModel(id) ? 'Save to GPU writes this into Ollama as a new model, so it keeps the persona even outside Crane' : 'Hosted on Hugging Face: the profile is applied by Crane on every request'}><pre className="adm-input" style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{modelfileText(id, p)}</pre></Field>}
+            <div className="adm-actions">
+              <button className="adm-btn gold" onClick={() => { onSave(p); onClose(); }}>Save</button>
+              {kind === 'chat' && isGpuModel(id) && <button className="adm-btn" onClick={bake}>Save to GPU model</button>}
+              <button className="adm-btn" onClick={() => { onSave(null); onClose(); }}>Reset to default</button>
+              <span className="adm-hint">{msg}</span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
 (() => {
   const m = location.hash.match(/[#&]cu=([\w-]+)/);
   if (!m) return;
@@ -589,7 +667,13 @@ function Toggle({ on, onChange }) {
   return <button type="button" className={'adm-toggle' + (on ? ' on' : '')} onClick={() => onChange(!on)}><span></span></button>;
 }
 
-function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onResetPatches }) {
+function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onResetPatches, onEditProfile }) {
+  const profList = (title, ids) => (
+    <div className="prof-rows">
+      <span className="adm-label" style={{ padding: '2px 10px 6px' }}>{title} · hover a model and click ✎</span>
+      {ids.map(([id, label]) => <ModelRow key={id} id={id} label={label} hasProfile={!!s.profiles[id]} onPick={() => onEditProfile(id)} onEdit={onEditProfile} />)}
+    </div>
+  );
   const [sec, setSec] = useState('workspace');
   const [voiceMsg, setVoiceMsg] = useState('');
   const eng = VOICE_ENGINES[s.voiceEngine];
@@ -653,7 +737,8 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
             <Field label="Stream responses">{tog('stream')}</Field>
             <Field label="Allow live CSS restyling">{tog('allowCss')}</Field>
             <Field label="Allow feature code (JS, runs on click)">{tog('allowJs')}</Field>
-            <Field label="Extra system instructions" hint="Appended to Beryl's system prompt"><textarea className="adm-input" rows="4" value={s.systemExtra} onChange={e => set('systemExtra', e.target.value)} /></Field>
+            <Field label="Extra system instructions" hint="Appended to Beryl's system prompt for every model"><textarea className="adm-input" rows="4" value={s.systemExtra} onChange={e => set('systemExtra', e.target.value)} /></Field>
+            {profList('Chat model profiles', models.map(m => [m, short(m)]).concat(HF_CHAT_MODELS.map(h => [h.id, h.label])))}
           </div>)}
 
           {sec === 'center' && (<div className="adm-grid">
@@ -663,6 +748,7 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
             <Field label="Video API endpoint">{inp('vidApi')}</Field>
             <Field label={'Clip length · ' + s.clipSeconds + 's'} hint="LTX-2.5 max ≈ 13s per clip"><input type="range" min="2" max="13" step="1" value={s.clipSeconds} onChange={e => set('clipSeconds', Number(e.target.value))} /></Field>
             <Field label="Auto-stitch (feed last frame into next clip)">{tog('autoStitch')}</Field>
+            {profList('Diffusion model profiles', HF_DIFFUSION_MODELS.map(d => [d.id, d.label]))}
           </div>)}
 
           {sec === 'voice' && (<div className="adm-grid">
@@ -679,6 +765,7 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
             <Field label="Speak Beryl's replies aloud">{tog('autoSpeak')}</Field>
             <Field label="TTS server URL" hint="OpenAI-compatible /audio/speech">{inp('ttsUrl')}</Field>
             <div className="adm-actions"><button className="adm-btn gold" onClick={testVoice}>▶ Test voice</button><span className="adm-hint">{voiceMsg}</span></div>
+            {profList('Voice model profiles', Object.entries(VOICE_ENGINES).map(([k, v]) => ['voice:' + k, v.label]))}
           </div>)}
 
           {sec === 'infra' && (<div className="adm-grid">
@@ -761,6 +848,8 @@ function Transcript() {
 function App() {
   const [settings, setSettings] = useState(loadSettings);
   const S = settings;
+  const [profEdit, setProfEdit] = useState(null);
+  const setProfile = (key, p) => setSettings(o => { const pr = { ...o.profiles }; if (p) pr[key] = p; else delete pr[key]; const n = { ...o, profiles: pr }; try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(n)); } catch (e) {} return n; });
   const setSetting = (k, v) => setSettings(o => { const n = { ...o, [k]: v }; try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(n)); } catch (e) {} return n; });
   const [adminOpen, setAdminOpen] = useState(false);
   const [tab, setTab] = useState(() => loadSettings().defaultTab);
@@ -806,7 +895,10 @@ function App() {
       const imgApiBase = S.imgApi;
       const headers = { 'Content-Type': 'application/json' };
       if (hfToken) headers['Authorization'] = 'Bearer ' + hfToken;
-      const body = refImg ? { inputs: imgPrompt, image: refImg.split(',')[1] } : { inputs: imgPrompt };
+      const ip = S.profiles[HF_DIFFUSION_MODELS[0].id] || {};
+      const body = { inputs: withProfile(imgPrompt, ip) };
+      if (ip.negative) body.parameters = { negative_prompt: ip.negative };
+      if (refImg) body.image = refImg.split(',')[1];
       const r = await fetch(imgApiBase, { method: 'POST', headers, body: JSON.stringify(body) });
       if (!r.ok) { const t = await r.text(); throw new Error(r.status + ' ' + t.slice(0,120)); }
       const blob = await r.blob();
@@ -823,7 +915,8 @@ function App() {
       const headers = { 'Content-Type': 'application/json' };
       if (hfToken) headers['Authorization'] = 'Bearer ' + hfToken;
       const lastFrame = vidClips.current.length ? vidClips.current[vidClips.current.length - 1] : null;
-      const body = { inputs: vidPrompt, parameters: { duration: S.clipSeconds } }; if (lastFrame && S.autoStitch) body.image = lastFrame;
+      const vp = S.profiles[HF_DIFFUSION_MODELS[1].id] || {};
+      const body = { inputs: withProfile(vidPrompt, vp), parameters: { duration: S.clipSeconds } }; if (vp.negative) body.parameters.negative_prompt = vp.negative; if (lastFrame && S.autoStitch) body.image = lastFrame;
       const r = await fetch(vidApiBase, { method: 'POST', headers, body: JSON.stringify(body) });
       if (!r.ok) { const t = await r.text(); throw new Error(r.status + ' ' + t.slice(0,120)); }
       const blob = await r.blob();
@@ -883,7 +976,15 @@ function App() {
         else reply = 'Nothing to undo.';
       } else if (cmd === '/reset') { setPatches([]); reply = 'All design changes cleared. Reload the page to clear any feature code.'; }
       else if (cmd === '/css') reply = patches.filter(p => p.kind === 'css').map(p => p.code).join('\n\n') || 'No style changes yet.';
-      else reply = 'Commands: /undo, /reset, /css';
+      else if (cmd === '/persona' || cmd === '/instructions') {
+        const val = text.slice(cmd.length).trim(), k = cmd.slice(1);
+        setProfile(model, { ...(S.profiles[model] || {}), [k]: val });
+        reply = val ? 'Set ' + k + ' for ' + short(model) + '.' : 'Cleared ' + k + ' for ' + short(model) + '.';
+      } else if (cmd === '/profile') {
+        if (/reset/i.test(text)) { setProfile(model, null); reply = short(model) + ' is back to default.'; }
+        else { const p = S.profiles[model]; reply = p ? 'Persona: ' + (p.persona || '—') + '\nInstructions: ' + (p.instructions || '—') + (p.temperature !== undefined && p.temperature !== '' ? '\nTemperature: ' + p.temperature : '') : short(model) + ' uses the default profile.'; }
+      }
+      else reply = 'Commands: /undo, /reset, /css, /persona <text>, /instructions <text>, /profile, /profile reset';
       setMsgs(m => m.concat({ text, who: 'me', via: 'TEXT' }, { text: reply, who: 'bot', via: '', local: true }));
       return;
     }
@@ -896,9 +997,12 @@ function App() {
     const setLast = (t, error, extra) => setMsgs(m => { const c = m.slice(); c[c.length - 1] = { ...c[c.length - 1], text: t, error, ...extra }; return c; });
     try {
       if (HF_DIFFUSION_MODELS.some(d => d.id === model)) throw new Error(short(model) + ' is a diffusion model — use the prompt box in the center panel, or pick a chat model');
-      const sys = SYSTEM.replace('MODEL_NAME', short(model)).replace(/Beryl/g, S.agentName) + (S.systemExtra ? '\n\n' + S.systemExtra : '');
+      const prof = S.profiles[model] || {};
+      const vprof = micOn ? S.profiles['voice:' + S.voiceEngine] || {} : {};
+      const sys = [prof.replace ? '' : SYSTEM.replace('MODEL_NAME', short(model)).replace(/Beryl/g, S.agentName), S.systemExtra, prof.persona, prof.instructions, vprof.persona, vprof.instructions].filter(x => x && x.trim()).join('\n\n');
+      const temp = prof.temperature !== undefined && prof.temperature !== '' ? Number(prof.temperature) : S.temperature;
       const hf = HF_CHAT_MODELS.find(h => h.id === model);
-      const call = (base, id, auth) => fetch(base.replace(/\/+$/, '') + '/chat/completions', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, auth && hfToken ? { Authorization: 'Bearer ' + hfToken } : {}), body: JSON.stringify({ model: id, temperature: S.temperature, max_tokens: S.maxTokens, messages: [{ role: 'system', content: sys }].concat(history), stream: S.stream }) });
+      const call = (base, id, auth) => fetch(base.replace(/\/+$/, '') + '/chat/completions', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, auth && hfToken ? { Authorization: 'Bearer ' + hfToken } : {}), body: JSON.stringify({ model: id, temperature: temp, max_tokens: S.maxTokens, messages: [{ role: 'system', content: sys }].concat(history), stream: S.stream }) });
       let res;
       if (hf) {
         res = hfToken ? await call(hf.base, hf.id, true).catch(() => null) : null;
@@ -927,15 +1031,18 @@ function App() {
       if (!out) setLast('(empty response)', true);
       else {
         const blocks = [...out.matchAll(/```(css|js|javascript)[^\n]*\n([\s\S]*?)```/gi)];
+        const profBlock = [...out.matchAll(/```profile[^\n]*\n([\s\S]*?)```/gi)].map(b => b[1].trim())[0];
+        let profNote = null;
+        if (profBlock) { try { const pj = JSON.parse(profBlock); const keep = {}; ['persona', 'instructions', 'temperature', 'negative'].forEach(k => { if (pj[k] !== undefined) keep[k] = pj[k]; }); setProfile(model, { ...(S.profiles[model] || {}), ...keep }); profNote = ['✓', 'Updated ' + short(model) + ' profile: ' + Object.keys(keep).join(', ') + ' — click ✎ on the model to review', '#a1a1aa']; } catch (e) { profNote = ['✕', 'Could not read the profile update', '#ef4444']; } }
         const cuBlock = [...out.matchAll(/```computer[^\n]*\n([\s\S]*?)```/gi)].map(b => b[1].trim())[0];
         let cu = null;
         if (cuBlock && S.cuEnabled) { try { cu = JSON.parse(cuBlock); if (!Array.isArray(cu)) cu = [cu]; } catch (e) { cu = null; } }
         const css = blocks.filter(b => b[1].toLowerCase() === 'css').map(b => b[2].trim()).filter(Boolean);
         const js = blocks.filter(b => b[1].toLowerCase() !== 'css').map(b => b[2].trim()).filter(Boolean).join('\n');
         if (css.length && S.allowCss) setPatches(p => p.concat(css.map(code => ({ kind: 'css', code }))));
-        if (css.length || js || cu) {
+        if (css.length || js || cu || profNote) {
           const clean = out.replace(/```[\s\S]*?```/g, '').replace(/\n{3,}/g, '\n\n').trim() || 'Done.';
-          setLast(clean, false, { raw: out, js: S.allowJs ? js : '', cu: cu && S.cuConfirm ? cu : null, steps: css.length && S.allowCss ? [['✓', 'Applied ' + css.length + ' style change' + (css.length > 1 ? 's' : '') + ' — /undo to revert', '#a1a1aa']] : undefined });
+          setLast(clean, false, { raw: out, js: S.allowJs ? js : '', cu: cu && S.cuConfirm ? cu : null, steps: [].concat(css.length && S.allowCss ? [['✓', 'Applied ' + css.length + ' style change' + (css.length > 1 ? 's' : '') + ' — /undo to revert', '#a1a1aa']] : [], profNote ? [profNote] : []) });
           if (cu && !S.cuConfirm) setTimeout(() => runComputer(null, cu), 0);
         }
       }
@@ -1024,25 +1131,14 @@ function App() {
               </button>
               {menuOpen && (
                 <div style={{ position: 'absolute', bottom: '34px', left: 0, minWidth: '240px', background: 'var(--surface2)', border: '1px solid var(--border-mid)', borderRadius: '10px', padding: '4px', zIndex: 10, boxShadow: '0 10px 30px rgba(0,0,0,.5)' }}>
-                  {(models.length ? models : [model]).map(id => (
-                    <button key={id} onClick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-2)', gap: '8px' }}>
-                      <span>{short(id)}</span><span style={{fontSize:'9px',color:'var(--fg-5)',flexShrink:0}}>{S.nodeName}</span>
-                    </button>
-                  ))}
+                  <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>GPU · {S.nodeName.toUpperCase()}</div>
+                  {models.length ? models.map(id => <ModelRow key={id} id={id} label={short(id)} active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>offline — start the tunnel to use the GPU</div>}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>SMALL MODELS · HF API</div>
-                  {HF_CHAT_MODELS.map(({id, label, base}) => (
-                    <button key={id} onClick={() => { setModel(id); setMenuOpen(false); }} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-2)', gap: '8px' }}>
-                      <span>{label}</span><span style={{fontSize:'9px',color:'#34d399',flexShrink:0}}>FREE GPU</span>
-                    </button>
-                  ))}
+                  {HF_CHAT_MODELS.map(({id, label}) => <ModelRow key={id} id={id} label={label} tag="FREE GPU" tagColor="#34d399" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />)}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>DIFFUSION · HF API</div>
-                  {HF_DIFFUSION_MODELS.map(({id, label, tag}) => (
-                    <button key={id} onClick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: '7px', fontFamily: "'Geist Mono',monospace", fontSize: '11px', color: id === model ? 'var(--gold)' : 'var(--fg-3)', gap: '8px' }}>
-                      <span>{label}</span><span style={{fontSize:'9px',color: tag.includes('image') ? '#818cf8' : '#34d399',flexShrink:0}}>{tag.split(' · ')[1].toUpperCase()}</span>
-                    </button>
-                  ))}
+                  {HF_DIFFUSION_MODELS.map(({id, label, tag}) => <ModelRow key={id} id={id} label={label} tag={tag.split(' · ')[1].toUpperCase()} tagColor={tag.includes('image') ? '#818cf8' : '#34d399'} active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />)}
                 </div>
               )}
             </div>
@@ -1215,7 +1311,8 @@ function App() {
     </aside>}
 
   </div>
-  {adminOpen && <AdminPanel s={S} set={setSetting} onClose={() => setAdminOpen(false)} models={models} online={online} onTest={refreshModels}
+  {profEdit && <ProfileEditor key={profEdit} id={profEdit} profile={S.profiles[profEdit]} gpuBase={S.gpuBase} onSave={p => setProfile(profEdit, p)} onClose={() => setProfEdit(null)} />}
+  {adminOpen && <AdminPanel s={S} set={setSetting} onEditProfile={setProfEdit} onClose={() => setAdminOpen(false)} models={models} online={online} onTest={refreshModels}
     onClearChat={() => setMsgs([])} onResetPatches={() => setPatches([])} />}
 </div>
   );
