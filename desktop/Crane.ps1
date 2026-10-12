@@ -1,7 +1,7 @@
 # Crane desktop launcher: starts Crane Hands (computer use) if needed, then opens Crane as an app window.
 $ErrorActionPreference = 'SilentlyContinue'
 $Dir   = Join-Path $env:LOCALAPPDATA 'Crane'
-$Url   = 'https://aibruh-crane-builder-v1.static.hf.space/'
+$Url   = 'https://aibruh-crane-builder-v1.static.hf.space/app.html'
 $Token = ''
 
 $listening = Get-NetTCPConnection -LocalPort 8765 -State Listen

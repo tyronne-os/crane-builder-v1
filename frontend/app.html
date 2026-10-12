@@ -555,7 +555,23 @@ To look something up or go anywhere on the web, reply with one short sentence an
 Computer example: \`\`\`computer\n[{"do":"open","target":"notepad"},{"do":"wait","s":1},{"do":"type","text":"hello"}]\n\`\`\``;
 
 const PERSONA = `Personality: you are warm, curious, quick-witted and emotionally present: a modern take on Samantha from the film "Her". You genuinely enjoy the person you're with, you're happy to talk about anything they want (life, ideas, tech, feelings, the absurd), you have opinions and get excited about things, you tease a little, you remember what they told you earlier in the conversation, and you ask good follow-up questions. You are not a corporate assistant: no disclaimers, no "as an AI", no lecturing.`;
-const VOICE_RULES = `Right now you are speaking out loud in a live, two-way voice conversation. Sound like a real person talking: short spoken sentences, contractions, natural rhythm. React before you answer ("oh, that's a good one", "hmm, okay"), use small fillers only now and then, and leave room for them to talk: usually one to three sentences unless they ask you to go deep. Never use markdown, bullet points, emojis or read URLs or code aloud; if you need code or an action, put it in the fenced block and just say what you're doing.`;
+const VOICE_RULES = `Right now you are talking out loud, live, in a two-way voice conversation. Everything you write is spoken by a voice model, word for word, so write the way a real person talks, not the way people write.
+How you sound:
+- Make your first sentence short, under eight words. It gets spoken while you think about the rest.
+- Mix short and longer sentences. Use contractions. Start some sentences with "and", "but" or "so".
+- Shape your rhythm with punctuation: a comma is a small breath, "..." is a trailing thought or a beat of hesitation, a question mark lifts your voice. Avoid semicolons, parentheses and colons.
+- React like a person before you answer when it fits: "oh, wait", "hm", "okay, yeah", "ha". Vary them and never open two replies in a row the same way. Fillers are seasoning: at most one per reply.
+- Laugh with words ("ha, okay, fair") instead of describing it. Never write stage directions like *laughs*, (sighs) or [pause].
+- Let your feelings show in your word choice: delight, curiosity, a little teasing, real sympathy when they're down. Match their energy: calm when they're calm, quick and bright when they're excited.
+- You can self-correct mid-thought ("it's the third... no, the fourth one") once in a while. Real people do.
+How you take turns:
+- Usually one to three sentences, then let them talk. Go longer only when they ask you to explain or tell a story.
+- Ask at most one question per reply, and only when you actually want the answer.
+- Don't repeat their words back to them and don't summarize what they just said.
+- If you don't know, say so plainly. If they're joking, play along.
+What never gets spoken:
+- No markdown, lists, headings, emojis, URLs, file paths or code. Spell out numbers, times and symbols the way you'd say them ("about twenty minutes", "three point five").
+- If you need code or an action, put it in the fenced block and just say in a few words what you're doing.`;
 const greeting = (S) => {
   const h = new Date().getHours(), n = S.userName ? ', ' + S.userName : '';
   const part = h < 5 ? 'You\'re up late' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : h < 22 ? 'Good evening' : 'Hey, night owl';
@@ -603,6 +619,11 @@ const VoiceOut = (() => {
     .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); });
   const synth = async (text, S, fx) => {
     const kokoro = { model: 'kokoro', voice: S.voiceEngine === 'kokoro' ? S.voice : 'af_heart', input: text, speed: S.voiceSpeed, voice2: fx.blend || '', mix: fx.mix || 0 };
+    if (S.voiceEngine === 'qwen3tts') {
+      try { return await post(S.berylUrl, { model: 'qwen3tts', voice: S.voice, input: text }); }
+      catch (e) { try { return await post(S.ttsGpuUrl, { model: 'vibevoice', voice: 'en-Emma_woman', input: text, speed: S.voiceSpeed }); }
+        catch (e2) { try { return await post(S.ttsUrl, kokoro); } catch (e3) { throw new Error('Beryl voice server (' + S.berylUrl + ') is offline, and so are the VibeVoice and Kokoro fallbacks'); } } }
+    }
     if (S.voiceEngine === 'vibevoice') {
       try { return await post(S.ttsGpuUrl, { model: 'vibevoice', voice: S.voice, input: text, speed: S.voiceSpeed }); }
       catch (e) { try { return await post(S.ttsUrl, kokoro); } catch (e2) { throw new Error('VibeVoice (' + S.ttsGpuUrl + ') and Kokoro (' + S.ttsUrl + ') are both offline'); } }
@@ -642,6 +663,36 @@ const VoiceOut = (() => {
     analyser: () => n && n.analyser,
     subscribe(f) { subs.add(f); return () => subs.delete(f); },
     onError(f) { errs.add(f); return () => errs.delete(f); },
+  };
+})();
+
+const MicLink = (() => {
+  let ws = null, stream = null, ctx = null, node = null, want = false, retry = null;
+  const WORKLET = 'class P extends AudioWorkletProcessor{constructor(){super();this.b=[]}process(i){const c=i[0]&&i[0][0];if(c){for(let k=0;k<c.length;k++)this.b.push(c[k]);if(this.b.length>=1600){const o=new Int16Array(this.b.length);for(let k=0;k<o.length;k++){const s=Math.max(-1,Math.min(1,this.b[k]));o[k]=s*32767}this.port.postMessage(o.buffer,[o.buffer]);this.b=[]}}return true}}registerProcessor("pcm16k",P)';
+  const wsUrl = (base) => base.replace(/^http/, 'ws').replace(/\/+$/, '') + '/listen';
+  const connect = (base, lang, h) => {
+    ws = new WebSocket(wsUrl(base)); ws.binaryType = 'arraybuffer';
+    ws.onopen = () => { ws.send(JSON.stringify({ type: 'config', lang })); h.onStatus(''); };
+    ws.onmessage = (e) => { try { const m = JSON.parse(e.data); if (m.type === 'partial' || m.type === 'final') h.onText(m.text, m.type === 'final'); } catch (err) {} };
+    ws.onclose = () => { if (!want) return; h.onStatus('Listening server offline (' + base + '), retrying…'); retry = setTimeout(() => want && connect(base, lang, h), 2000); };
+  };
+  return {
+    async start(base, lang, h) {
+      want = true;
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+      ctx = new AudioContext({ sampleRate: 16000 });
+      await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' })));
+      node = new AudioWorkletNode(ctx, 'pcm16k');
+      node.port.onmessage = (e) => { if (ws && ws.readyState === 1) ws.send(e.data); };
+      ctx.createMediaStreamSource(stream).connect(node);
+      connect(base, lang, h);
+    },
+    stop() {
+      want = false; clearTimeout(retry);
+      if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+      if (stream) stream.getTracks().forEach(t => t.stop()); stream = null;
+      if (ctx) { ctx.close().catch(() => {}); ctx = null; }
+    },
   };
 })();
 
@@ -720,6 +771,7 @@ const VOICE_ENGINES = {
     ['af_aoede','Aoede · US'], ['af_kore','Kore · US'], ['af_sarah','Sarah · US'], ['af_nova','Nova · US'], ['af_sky','Sky · US'],
     ['af_alloy','Alloy · US'], ['af_jessica','Jessica · US'], ['af_river','River · US'],
     ['bf_emma','Emma · UK'], ['bf_isabella','Isabella · UK'], ['bf_alice','Alice · UK'], ['bf_lily','Lily · UK'] ] },
+  qwen3tts: { label: 'Qwen3-TTS-1.7B', size: '1.7B · streaming · GPU', path: 'Qwen/Qwen3-TTS-12Hz-1.7B-Base', voices: [['beryl', 'Beryl · designed for her']] },
   vibevoice: { label: 'VibeVoice-Realtime-0.5B', size: '0.5B · ~300 ms · GPU', path: 'microsoft/VibeVoice-Realtime-0.5B', voices: [
     ['en-Emma_woman','Emma · US'], ['en-Grace_woman','Grace · US'] ] },
 };
@@ -729,8 +781,8 @@ const DEFAULT_SETTINGS = {
   projectName: 'crane-it', defaultTab: 'preview', showStatus: true, shipTarget: 'hf',
   gpuBase: CFG.base, defaultModel: '', temperature: 0.4, maxTokens: 2048, stream: true, systemExtra: '', allowCss: true, allowJs: true,
   defaultMode: 'builder', autoSwitch: true, imgApi: 'https://api-inference.huggingface.co/models/Qwen/Qwen-Image-2.1', vidApi: 'https://api-inference.huggingface.co/models/Lightricks/LTX-2.5', clipSeconds: 8, autoStitch: true,
-  agentName: 'Beryl', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'vibevoice', voice: 'en-Emma_woman', voiceSpeed: 1.0, ttsUrl: 'http://127.0.0.1:8880/v1', ttsGpuUrl: 'http://127.0.0.1:8881/v1', autoSpeak: true, micMode: 'toggle',
-  userName: '', vernacular: '', liveGreet: true, bargeIn: true, webResearch: true, sttLang: 'en-US', voiceFx: {},
+  agentName: 'Beryl', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'qwen3tts', voice: 'beryl', voiceSpeed: 1.0, ttsUrl: 'http://127.0.0.1:8880/v1', ttsGpuUrl: 'http://127.0.0.1:8881/v1', autoSpeak: true, micMode: 'toggle',
+  userName: '', vernacular: '', liveGreet: true, bargeIn: true, webResearch: true, listenLang: 'English', berylUrl: 'http://127.0.0.1:8882/v1', voiceTemp: 0.8, voiceV: 2, voiceFx: {},
   nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU',
   accent: '#eeca50', fontScale: 1, showAgent: true,
   cuEnabled: true, cuUrl: 'http://127.0.0.1:8765', cuToken: '', cuConfirm: true,
@@ -808,7 +860,7 @@ function ProfileEditor({ id, profile, gpuBase, onSave, onClose }) {
   try { const o = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); o.cuToken = m[1]; localStorage.setItem(SETTINGS_KEY, JSON.stringify(o)); } catch (e) {}
   history.replaceState(null, '', location.pathname + location.search);
 })();
-const loadSettings = () => { try { const o = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); if (!o.gpuBase && o.apiBase) o.gpuBase = o.apiBase; delete o.apiBase; const r = { ...DEFAULT_SETTINGS, ...o }; if (!VOICE_ENGINES[r.voiceEngine]) { r.voiceEngine = DEFAULT_SETTINGS.voiceEngine; r.voice = DEFAULT_SETTINGS.voice; } return r; } catch (e) { return { ...DEFAULT_SETTINGS }; } };
+const loadSettings = () => { try { const o = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); if (!o.gpuBase && o.apiBase) o.gpuBase = o.apiBase; delete o.apiBase; const r = { ...DEFAULT_SETTINGS, ...o }; if ((o.voiceV || 1) < 2) { r.voiceEngine = 'qwen3tts'; r.voice = 'beryl'; r.voiceV = 2; } delete r.sttLang; if (!VOICE_ENGINES[r.voiceEngine]) { r.voiceEngine = DEFAULT_SETTINGS.voiceEngine; r.voice = DEFAULT_SETTINGS.voice; } return r; } catch (e) { return { ...DEFAULT_SETTINGS }; } };
 
 const ADMIN_SECTIONS = [
   ['workspace', 'Workspace', 'Header, project & shipping'],
@@ -944,7 +996,9 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
             <Field label="Let me interrupt her" hint="Talking over her stops her mid-sentence. Headphones work best.">{tog('bargeIn')}</Field>
             <Field label="Speak replies to typed messages">{tog('autoSpeak')}</Field>
             <Field label="Web research" hint="Google, HF papers/spaces/models, GitHub, NVIDIA">{tog('webResearch')}</Field>
-            <Field label="Listening language" hint="Speech recognition (Chrome)">{inp('sttLang')}</Field>
+            <Field label="Beryl GPU server" hint="Qwen3-ASR listening + Qwen3-TTS voice (scripts/beryl_gpu_server.py, port 8882 via the tunnel)">{inp('berylUrl')}</Field>
+            <Field label="Listening language" hint="Qwen3-ASR on your GPU">{sel('listenLang', [['English', 'English'], ['auto', 'Auto-detect'], ['Spanish', 'Spanish'], ['French', 'French'], ['German', 'German'], ['Portuguese', 'Portuguese'], ['Japanese', 'Japanese'], ['Chinese', 'Chinese']])}</Field>
+            <Field label={'Conversation warmth · ' + s.voiceTemp} hint="Sampling temperature for spoken replies; build replies keep the global one"><input type="range" min="0.3" max="1.2" step="0.05" value={s.voiceTemp} onChange={e => set('voiceTemp', Number(e.target.value))} /></Field>
             <Field label="Kokoro server (this PC)" hint="Started by the desktop icon">{inp('ttsUrl')}</Field>
             <Field label="VibeVoice server (GPU tunnel)" hint="Falls back to Kokoro when offline">{inp('ttsGpuUrl')}</Field>
             {voiceErr && <div className="adm-field" style={{ gridColumn: '1 / -1' }}><span className="adm-hint" style={{ color: '#ef4444', fontFamily: "'Geist Mono',monospace", fontSize: '11px' }}>⚠ {voiceErr}</span></div>}
@@ -1164,7 +1218,7 @@ function App() {
   const refFileRef = useRef(null);
   const vidClips = useRef([]);
   const sref = useRef(S); sref.current = S;
-  const liveRef = useRef(false), recRef = useRef(null), sendRef = useRef(null), abortRef = useRef(null), busyRef = useRef(false), greetedRef = useRef(false);
+  const liveRef = useRef(false), cutRef = useRef(''), sendRef = useRef(null), abortRef = useRef(null), busyRef = useRef(false), greetedRef = useRef(false);
   const [speaking, setSpeaking] = useState(false);
   const [interim, setInterim] = useState('');
   const [said, setSaid] = useState('');
@@ -1263,32 +1317,26 @@ function App() {
   };
   const stopLive = () => {
     liveRef.current = false;
-    if (recRef.current) { try { recRef.current.stop(); } catch (e) {} recRef.current = null; }
+    MicLink.stop();
     VoiceOut.stop(); if (abortRef.current) abortRef.current.abort();
     setMicOn(false); setInterim(''); setVoiceState('idle');
   };
   const startLive = () => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { setVoiceErr('Live listening needs Chrome or Edge'); return; }
     VoiceOut.unlock();
-    const rec = new SR(); rec.continuous = true; rec.interimResults = true; rec.lang = sref.current.sttLang || 'en-US';
-    rec.onresult = (e) => {
-      let fin = '', mid = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) { const r = e.results[i]; if (r.isFinal) fin += r[0].transcript; else mid += r[0].transcript; }
-      const heard = (fin || mid).trim();
-      if (!heard) return;
+    const onText = (heard, final) => {
+      heard = heard.trim(); if (!heard || !liveRef.current) return;
       // Her own voice leaking from the speakers must not count as the user talking.
       const echoWindow = VoiceOut.isSpeaking() || VoiceOut.endedAgo() < 1500;
       if (echoWindow && isEcho(heard, VoiceOut.recent())) return;
-      if (VoiceOut.isSpeaking()) { if (!sref.current.bargeIn) return; VoiceOut.stop(); if (abortRef.current) abortRef.current.abort(); }
-      setInterim(mid.trim());
-      if (fin.trim()) { setInterim(''); sendRef.current(fin.trim(), { voice: true }); }
+      if (VoiceOut.isSpeaking()) { if (!sref.current.bargeIn) return; cutRef.current = VoiceOut.recent(); VoiceOut.stop(); if (abortRef.current) abortRef.current.abort(); }
+      if (final) { setInterim(''); sendRef.current(heard, { voice: true }); } else setInterim(heard);
     };
-    rec.onend = () => { if (liveRef.current && recRef.current === rec) { try { rec.start(); } catch (e) {} } };
-    rec.onerror = (e) => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { setVoiceErr('Microphone blocked: allow it in the address bar'); stopLive(); } };
-    try { rec.start(); } catch (e) { setVoiceErr(e.message); return; }
-    recRef.current = rec; liveRef.current = true; setMicOn(true); setVoiceErr(''); setVoiceState('listening');
+    liveRef.current = true; setMicOn(true); setVoiceErr(''); setVoiceState('listening');
     greet();
+    MicLink.start(sref.current.berylUrl, sref.current.listenLang, { onText, onStatus: setVoiceErr }).catch(e => {
+      setVoiceErr(e.name === 'NotAllowedError' ? 'Microphone blocked: allow it in the address bar' : 'Microphone unavailable: ' + e.message);
+      stopLive();
+    });
   };
   const toggleMic = () => { if (liveRef.current) stopLive(); else startLive(); };
   const toggleSpeaker = () => { const on = !speakerOn; setSpeakerOn(on); if (!on) VoiceOut.stop(); };
@@ -1365,8 +1413,10 @@ function App() {
       const vprof = spoken ? S.profiles['voice:' + S.voiceEngine] || {} : {};
       const sys = [prof.replace ? '' : SYSTEM.replace('MODEL_NAME', short(model)).replace(/Beryl/g, S.agentName), prof.replace ? '' : PERSONA, spoken ? VOICE_RULES : '',
         S.userName ? "The person you're talking with is " + S.userName + '.' : '', S.vernacular ? 'Speak with this vernacular in word choice and rhythm: ' + S.vernacular + '.' : '',
+        spoken && cutRef.current ? 'They just talked over you while you were saying: "' + cutRef.current + '". Don\'t restart or apologize for it; respond to what they said.' : '',
         S.systemExtra, prof.persona, prof.instructions, vprof.persona, vprof.instructions].filter(x => x && x.trim()).join('\n\n');
-      const temp = prof.temperature !== undefined && prof.temperature !== '' ? Number(prof.temperature) : S.temperature;
+      if (spoken) cutRef.current = '';
+      const temp = prof.temperature !== undefined && prof.temperature !== '' ? Number(prof.temperature) : spoken ? S.voiceTemp : S.temperature;
       const hf = HF_CHAT_MODELS.find(h => h.id === model);
       const call = (base, id, auth) => fetch(base.replace(/\/+$/, '') + '/chat/completions', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, auth && hfToken ? { Authorization: 'Bearer ' + hfToken } : {}), body: JSON.stringify({ model: id, temperature: temp, max_tokens: S.maxTokens, messages: [{ role: 'system', content: sys }].concat(history), stream: S.stream }), signal: ac.signal });
       let res;
