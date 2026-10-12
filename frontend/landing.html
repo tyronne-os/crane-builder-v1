@@ -21,7 +21,7 @@
     body{background:#09090b;color:#fafafa;font-family:'Geist',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
     a{color:inherit;text-decoration:none}
     a:hover{color:#fbbf24}
-    .hp{width:max(min(100vw,125vh),100vh);right:0;bottom:0}
+    .hp{width:max(min(100vw,125vh),100vh);right:0;bottom:0;-webkit-mask-image:linear-gradient(180deg,transparent 10.5%,#000 14%,#000 86.5%,transparent 88.5%);mask-image:linear-gradient(180deg,transparent 10.5%,#000 14%,#000 86.5%,transparent 88.5%)}
     @media (max-aspect-ratio:1/1){.hp{--s:min(150vw,85vh);width:var(--s);right:auto;bottom:auto;left:calc(50vw - .47*var(--s));top:max(64px,6vh)}}
     @keyframes focusIn{0%{filter:blur(18px) brightness(.4);transform:scale(1.14)}100%{filter:blur(0) brightness(1);transform:scale(1)}}
     @keyframes kb{0%{transform:scale(1) translate3d(0,0,0)}100%{transform:scale(1.06) translate3d(-1%,-1.2%,0)}}
