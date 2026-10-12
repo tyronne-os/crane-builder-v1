@@ -1,3 +1,23 @@
+---
+title: Crane Builder V1
+emoji: 🏗️
+colorFrom: blue
+colorTo: indigo
+sdk: gradio
+sdk_version: "4.44.0"
+app_file: app.py
+pinned: false
+---
+---
+title: Crane Builder V1
+emoji: 🏗️
+colorFrom: blue
+colorTo: indigo
+sdk: gradio
+sdk_version: "4.44.0"
+app_file: app.py
+pinned: false
+---
 # Crane Builder V1
 
 AI-powered website builder. Describe your project — Beryl builds it live.
