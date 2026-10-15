@@ -871,7 +871,7 @@ const DEFAULT_SETTINGS = {
   agentName: 'Beryl', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'qwen3tts', voice: 'beryl', voiceSpeed: 1.0, ttsUrl: 'http://127.0.0.1:8880/v1', ttsGpuUrl: 'http://127.0.0.1:8881/v1', autoSpeak: true, micMode: 'toggle',
   userName: '', vernacular: '', liveGreet: true, bargeIn: true, avatarOn: true, webResearch: true, listenLang: 'English', berylUrl: 'http://127.0.0.1:8882/v1', voiceTemp: 0.8, voiceV: 2, voiceFx: {},
   nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU',
-  registryUrl: 'http://localhost:11436/v1', cpuBase: 'http://localhost:11438/v1', nvidiaModels: [], nvidiaKey: '',
+  registryUrl: 'http://localhost:11436/v1', cpuBase: 'http://localhost:11438/v1', nvidiaModels: [], nvidiaKey: '', nvidiaEnterpriseKey: '', nvidiaEnterpriseModels: [],
   providers: { 
     anthropic: '', 'openrouter': '', 'huggingface': '', 'google': '', 'meta-muse': '',
     claude: '', 'gemini': '', 'openai': ''
@@ -1037,7 +1037,9 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
             <Field label="GPU endpoint (tunnel + proxy)" hint="Where chat models are served. Defaults to http://localhost:11435/v1, which proxies to Ollama on 11434.">{inp('gpuBase')}</Field>
             <Field label="Model registry (discovery)" hint="Read-only. Reports which models are really installed on the GPU box. Leave blank to fall back to listing the Ollama endpoint directly.">{inp('registryUrl')}</Field>
             <Field label="NVIDIA API key" hint="From build.nvidia.com. Sent as a Bearer token to integrate.api.nvidia.com. Stored in this browser only."><input className="adm-input" type="password" value={s.nvidiaKey || ''} onChange={e => set('nvidiaKey', e.target.value)} spellCheck={false} /></Field>
+            <Field label="NVIDIA Enterprise API key" hint="For exclusive advanced digital human models. Sent as Bearer token to integrate.api.nvidia.com."><input className="adm-input" type="password" value={s.nvidiaEnterpriseKey || ''} onChange={e => set('nvidiaEnterpriseKey', e.target.value)} spellCheck={false} /></Field>
             <Field label="NVIDIA model ids" hint="One per line. api.nvidia.com cannot be queried for a model list, so paste the ids you want. Example: meta/llama-3.3-70b-instruct"><textarea className="adm-input" rows="6" spellCheck={false} style={{fontFamily:"'Geist Mono',monospace",fontSize:'11px'}} value={(s.nvidiaModels || []).join('\n')} onChange={e => set('nvidiaModels', e.target.value.split('\n').map(x => x.trim()).filter(Boolean))} /></Field>
+            <Field label="NVIDIA Enterprise model ids" hint="Exclusive digital human models. One per line."><textarea className="adm-input" rows="4" spellCheck={false} style={{fontFamily:"'Geist Mono',monospace",fontSize:'11px'}} value={(s.nvidiaEnterpriseModels || []).join('\n')} onChange={e => set('nvidiaEnterpriseModels', e.target.value.split('\n').map(x => x.trim()).filter(Boolean))} /></Field>
             <div className="adm-field" style={{gridColumn:'1/-1'}}>
               <div className="adm-label">PROVIDER API KEYS</div>
               <div className="adm-hint">Click a provider in the model menu to set its key. Keys are stored in this browser only.</div>
@@ -1617,6 +1619,9 @@ function App() {
       // No silent cross-cloud fallback - if the chosen backend is down the send
       // fails and names the endpoint, rather than quietly moving you elsewhere.
       const onCpu = cpuModels.includes(model);
+      const nvidiaListEnt = (s.nvidiaEnterpriseModels || []).map(id => ({id, label:id.split('/').pop(), tag:'NVIDIA ENT'}));
+      const nvidia = nvidiaList.some(n => n.id === model);
+      const nvidiaEnt = nvidiaListEnt.some(n => n.id === model);
       const provider = (model.split('/')[0]).toLowerCase();
       const providerBases = {
         anthropic: 'https://api.anthropic.com/v1',
@@ -1629,10 +1634,15 @@ function App() {
         openai: 'https://api.openai.com/v1'
       };
       const provBase = providerBases[provider];
-      const target = nvidia ? NVIDIA_BASE : provBase ? provBase : onCpu ? S.cpuBase : S.gpuBase;
+      const target = nvidia || nvidiaEnt ? NVIDIA_BASE : provBase ? provBase : onCpu ? S.cpuBase : S.gpuBase;
       let headers = {};
-      if (nvidia && S.nvidiaKey) headers = { Authorization: 'Bearer ' + S.nvidiaKey };
-      else if (provider === 'anthropic' || provider === 'claude') {
+      if (nvidiaEnt) {
+        if (!S.nvidiaEnterpriseKey) throw new Error('NVIDIA Enterprise API key not set. Open Settings → NVIDIA Enterprise API key');
+        headers = { Authorization: 'Bearer ' + S.nvidiaEnterpriseKey };
+      } else if (nvidia) {
+        if (!S.nvidiaKey) throw new Error('NVIDIA API key not set');
+        headers = { Authorization: 'Bearer ' + S.nvidiaKey };
+      } else if (provider === 'anthropic' || provider === 'claude') {
         const key = S.providers?.anthropic || S.providers?.claude || '';
         if (!key) throw new Error('Anthropic subscription key not set. Open Settings → Provider API Keys');
         headers = { 'x-api-key': key, 'anthropic-version': '2023-06-01' };
@@ -1793,6 +1803,9 @@ function App() {
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>NVIDIA CLOUD · NIM</div>
                   {nvidiaList.length ? nvidiaList.map(({id, label, tag}) => <ModelRow key={id} id={id} label={label} tag={tag} tagColor="#76b900" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>add model ids in Settings → NVIDIA cloud</div>}
+                  <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
+                  <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>NVIDIA ENTERPRISE · DIGITAL HUMANS</div>
+                  {(S.nvidiaEnterpriseModels || []).length ? (S.nvidiaEnterpriseModels || []).map(id => <ModelRow key={id} id={id} label={short(id)} tag="NVIDIA ENT" tagColor="#ff7a00" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>add model ids in Settings → NVIDIA Enterprise</div>}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>PROVIDERS · API KEYS</div>
                   {Object.entries(S.providers || {}).map(([k,v]) => (
