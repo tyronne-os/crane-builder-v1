@@ -872,6 +872,10 @@ const DEFAULT_SETTINGS = {
   userName: '', vernacular: '', liveGreet: true, bargeIn: true, avatarOn: true, webResearch: true, listenLang: 'English', berylUrl: 'http://127.0.0.1:8882/v1', voiceTemp: 0.8, voiceV: 2, voiceFx: {},
   nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU',
   registryUrl: 'http://localhost:11436/v1', cpuBase: 'http://localhost:11438/v1', nvidiaModels: [], nvidiaKey: '',
+  providers: { 
+    anthropic: '', 'openrouter': '', 'huggingface': '', 'google': '', 'meta-muse': '',
+    claude: '', 'gemini': '', 'openai': ''
+  },
   accent: '#eeca50', fontScale: 1, showAgent: true,
   cuEnabled: true, cuUrl: 'http://127.0.0.1:8765', cuToken: '', cuConfirm: true,
   profiles: {},
@@ -1034,6 +1038,18 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
             <Field label="Model registry (discovery)" hint="Read-only. Reports which models are really installed on the GPU box. Leave blank to fall back to listing the Ollama endpoint directly.">{inp('registryUrl')}</Field>
             <Field label="NVIDIA API key" hint="From build.nvidia.com. Sent as a Bearer token to integrate.api.nvidia.com. Stored in this browser only."><input className="adm-input" type="password" value={s.nvidiaKey || ''} onChange={e => set('nvidiaKey', e.target.value)} spellCheck={false} /></Field>
             <Field label="NVIDIA model ids" hint="One per line. api.nvidia.com cannot be queried for a model list, so paste the ids you want. Example: meta/llama-3.3-70b-instruct"><textarea className="adm-input" rows="6" spellCheck={false} style={{fontFamily:"'Geist Mono',monospace",fontSize:'11px'}} value={(s.nvidiaModels || []).join('\n')} onChange={e => set('nvidiaModels', e.target.value.split('\n').map(x => x.trim()).filter(Boolean))} /></Field>
+            <div className="adm-field" style={{gridColumn:'1/-1'}}>
+              <div className="adm-label">PROVIDER API KEYS</div>
+              <div className="adm-hint">Click a provider in the model menu to set its key. Keys are stored in this browser only.</div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))',gap:'8px',marginTop:'8px'}}>
+                {Object.entries(s.providers || {}).map(([k,v]) => (
+                  <div key={k} style={{display:'flex',gap:'6px',alignItems:'center'}}>
+                    <input className="adm-input" type="password" placeholder={k.toUpperCase()} value={v} onChange={e => set('providers', {...s.providers, [k]: e.target.value})} style={{flex:1}} />
+                    <span style={{fontSize:'10px',color:'var(--fg-5)',textTransform:'uppercase'}}>{k}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
             <Field label="Default model" hint="Picked on load when the server has it">{sel('defaultModel', [['', 'First available']].concat(models.map(m => [m, short(m)])))}</Field>
             <Field label={'Temperature · ' + s.temperature}><input type="range" min="0" max="1.5" step="0.05" value={s.temperature} onChange={e => set('temperature', Number(e.target.value))} /></Field>
             <Field label="Max tokens">{inp('maxTokens', 'number')}</Field>
@@ -1743,7 +1759,14 @@ function App() {
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>NVIDIA CLOUD · NIM</div>
                   {nvidiaList.length ? nvidiaList.map(({id, label, tag}) => <ModelRow key={id} id={id} label={label} tag={tag} tagColor="#76b900" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>add model ids in Settings → NVIDIA cloud</div>}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
-                                    <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
+                  <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>PROVIDERS · API KEYS</div>
+                  {Object.entries(S.providers || {}).map(([k,v]) => (
+                    <div key={k} className="mrow" style={{cursor:'pointer'}} onClick={() => { const key = prompt('Enter API key for ' + k.toUpperCase()); if (key) set('providers', {...S.providers, [k]: key}); }}>
+                      <span className="mname" style={{textTransform:'uppercase'}}>{k}</span>
+                      <span className="mtag" style={{color: v ? '#34d399' : '#71717a'}}>{v ? 'configured' : 'needs key'}</span>
+                    </div>
+                  ))}
+                  <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>DIFFUSION · HF API</div>
                   {HF_DIFFUSION_MODELS.map(({id, label, tag}) => <ModelRow key={id} id={id} label={label} tag={tag.split(' · ')[1].toUpperCase()} tagColor={tag.includes('image') ? '#818cf8' : '#34d399'} active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />)}
                 </div>
