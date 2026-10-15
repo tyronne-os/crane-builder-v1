@@ -537,9 +537,13 @@ const MicIcon = () => (<svg width="16" height="16" viewBox="0 0 24 24" fill="non
 
 const VOICE_LABELS = { listening:'LISTENING', muted:'MUTED', speaking:'SPEAKING', 'speaker-off':'SPEAKER OFF', idle:'IDLE' };
 
+// Default to the model known to be resident on berylize-node. Overridable with ?model=
+// or from Settings. If this id is absent, refreshModels() snaps to a model that exists,
+// so a stale default degrades to "some real model" instead of a dead selection.
+const DEFAULT_LOCAL_MODEL = 'hf.co/mradermacher/Qwen2.5-14B-Instruct-Heretic-GGUF:Q4_K_M';
 const CFG = (() => {
   const q = new URLSearchParams(location.search);
-  return { base: (q.get('api') || 'http://localhost:11435/v1').replace(/\/+$/, ''), model: q.get('model') || 'Qwen/Qwen2.5-Coder-1.5B-Instruct' };
+  return { base: (q.get('api') || 'http://localhost:11435/v1').replace(/\/+$/, ''), model: q.get('model') || DEFAULT_LOCAL_MODEL };
 })();
 
 const SYSTEM = `You are Beryl, the build agent inside Crane Builder, made by Beryl Labs. You run on the open-weights model "MODEL_NAME" on the user's own GPU server (berylize-node); say so if asked which model you are. Be concise and direct.
@@ -833,12 +837,20 @@ const HF_DIFFUSION_MODELS = [
   { id: 'Lightricks/LTX-2.5',             label: 'LTX-2.5',                   tag: 'HF · video' },
 ];
 
-const HF_CHAT_MODELS = [
-  { id: 'Qwen/Qwen2.5-Coder-1.5B-Instruct', label: 'Qwen2.5-Coder-1.5B', base: 'https://router.huggingface.co/v1', fallback: 'https://aibruh-berylize-api.hf.space/v1', fallbackModel: 'Qwen2.5-Coder-1.5B-abliterated' },
-  { id: 'DavidAU/gemma-3-1b-it-heretic-extreme-uncensored-abliterated', label: 'Gemma3-1B-Uncensored', base: 'https://router.huggingface.co/v1', fallback: 'https://aibruh-berylize-api.hf.space/v1', fallbackModel: 'Qwen2.5-Coder-1.5B-abliterated' },
-  { id: 'uzairkhn/Llama-3.2-1B-Instruct-Uncensored', label: 'Llama3.2-1B-Uncensored', base: 'https://router.huggingface.co/v1', fallback: 'https://aibruh-berylize-api.hf.space/v1', fallbackModel: 'Qwen2.5-Coder-1.5B-abliterated' },
-  { id: 'nztinversive/llama3.2-1b-Uncensored', label: 'Llama3.2-1B-Raw', base: 'https://router.huggingface.co/v1', fallback: 'https://aibruh-berylize-api.hf.space/v1', fallbackModel: 'Qwen2.5-Coder-1.5B-abliterated' },
-];
+// There is deliberately no hardcoded local model list. A pinned list goes stale: it
+// shows rows for models that were never pulled and hides ones that were. The GPU
+// section is built entirely from what the box reports (see refreshModels), so a model
+// appears the moment it is installed and disappears when it is removed.
+
+const NVIDIA_BASE = 'https://integrate.api.nvidia.com/v1';
+
+// NVIDIA NIM models are not discoverable: api.nvidia.com has no "list everything I
+// can run" endpoint. So the list is whatever you paste into Settings -> NVIDIA cloud.
+// Edit it there; no code change needed.
+const nvidiaModels = (list) => (list || []).map(id => {
+  const s = String(id).trim();
+  return s ? { id: s, label: s.split('/').pop(), tag: 'NVIDIA' } : null;
+}).filter(Boolean);
 
 const VOICE_ENGINES = {
   kokoro: { label: 'Kokoro-82M', size: '82M · 330 MB', path: '/opt/berylize/small-models/voice/kokoro-82m', voices: [
@@ -859,6 +871,7 @@ const DEFAULT_SETTINGS = {
   agentName: 'Beryl', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'qwen3tts', voice: 'beryl', voiceSpeed: 1.0, ttsUrl: 'http://127.0.0.1:8880/v1', ttsGpuUrl: 'http://127.0.0.1:8881/v1', autoSpeak: true, micMode: 'toggle',
   userName: '', vernacular: '', liveGreet: true, bargeIn: true, avatarOn: true, webResearch: true, listenLang: 'English', berylUrl: 'http://127.0.0.1:8882/v1', voiceTemp: 0.8, voiceV: 2, voiceFx: {},
   nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU',
+  registryUrl: 'http://localhost:11436/v1', nvidiaModels: [], nvidiaKey: '',
   accent: '#eeca50', fontScale: 1, showAgent: true,
   cuEnabled: true, cuUrl: 'http://127.0.0.1:8765', cuToken: '', cuConfirm: true,
   profiles: {},
@@ -866,7 +879,8 @@ const DEFAULT_SETTINGS = {
 
 const Q3 = '"'.repeat(3);
 const profKind = (key) => key.startsWith('voice:') ? 'voice' : HF_DIFFUSION_MODELS.some(d => d.id === key) ? 'diffusion' : 'chat';
-const isGpuModel = (key) => profKind(key) === 'chat' && !HF_CHAT_MODELS.some(h => h.id === key);
+// Every chat model now runs on your own hardware, so "Save to GPU" applies to all of them.
+const isGpuModel = (key) => profKind(key) === 'chat';
 const profLabel = (key) => key.startsWith('voice:') ? VOICE_ENGINES[key.slice(6)].label : short(key);
 const bakedName = (key) => 'crane-' + short(key).toLowerCase().replace(/[^a-z0-9.]+/g, '-').replace(/^-|-$/g, '');
 const withProfile = (prompt, p) => [p && p.persona, prompt, p && p.instructions].filter(x => x && x.trim()).join(', ');
@@ -916,7 +930,7 @@ function ProfileEditor({ id, profile, gpuBase, onSave, onClose }) {
             {kind === 'diffusion' && <Field label="Negative prompt">{area('negative', 2, 'blurry, watermark, extra fingers')}</Field>}
             {kind === 'chat' && <Field label="Temperature override" hint="Leave blank to use the global setting"><input className="adm-input" type="number" step="0.05" min="0" max="2" value={p.temperature} onChange={e => upd('temperature', e.target.value)} /></Field>}
             {kind === 'chat' && <Field label="Replace built-in prompt entirely" hint="On: only your persona + instructions are sent. Off: they are added to Beryl's built-in prompt, which keeps live restyling and computer use working"><Toggle on={p.replace} onChange={v => upd('replace', v)} /></Field>}
-            {kind === 'chat' && <Field label="Model file" hint={isGpuModel(id) ? 'Save to GPU writes this into Ollama as a new model, so it keeps the persona even outside Crane' : 'Hosted on Hugging Face: the profile is applied by Crane on every request'}><pre className="adm-input" style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{modelfileText(id, p)}</pre></Field>}
+            {kind === 'chat' && <Field label="Model file" hint="Save to GPU writes this into Ollama as a new model, so it keeps the persona even outside Crane"><pre className="adm-input" style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{modelfileText(id, p)}</pre></Field>}
             <div className="adm-actions">
               <button className="adm-btn gold" onClick={() => { onSave(p); onClose(); }}>Save</button>
               {kind === 'chat' && isGpuModel(id) && <button className="adm-btn" onClick={bake}>Save to GPU model</button>}
@@ -1016,7 +1030,10 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
           </div>)}
 
           {sec === 'chat' && (<div className="adm-grid">
-            <Field label="GPU endpoint (tunnel + proxy)" hint="Used only when you pick a GPU model. Small Qwen always runs on HF free GPU, falling back to the berylize-api CPU Space">{inp('gpuBase')}</Field>
+            <Field label="GPU endpoint (tunnel + proxy)" hint="Where chat models are served. Defaults to http://localhost:11435/v1, which proxies to Ollama on 11434.">{inp('gpuBase')}</Field>
+            <Field label="Model registry (discovery)" hint="Read-only. Reports which models are really installed on the GPU box. Leave blank to fall back to listing the Ollama endpoint directly.">{inp('registryUrl')}</Field>
+            <Field label="NVIDIA API key" hint="From build.nvidia.com. Sent as a Bearer token to integrate.api.nvidia.com. Stored in this browser only."><input className="adm-input" type="password" value={s.nvidiaKey || ''} onChange={e => set('nvidiaKey', e.target.value)} spellCheck={false} /></Field>
+            <Field label="NVIDIA model ids" hint="One per line. api.nvidia.com cannot be queried for a model list, so paste the ids you want. Example: meta/llama-3.3-70b-instruct"><textarea className="adm-input" rows="6" spellCheck={false} style={{fontFamily:"'Geist Mono',monospace",fontSize:'11px'}} value={(s.nvidiaModels || []).join('\n')} onChange={e => set('nvidiaModels', e.target.value.split('\n').map(x => x.trim()).filter(Boolean))} /></Field>
             <Field label="Default model" hint="Picked on load when the server has it">{sel('defaultModel', [['', 'First available']].concat(models.map(m => [m, short(m)])))}</Field>
             <Field label={'Temperature · ' + s.temperature}><input type="range" min="0" max="1.5" step="0.05" value={s.temperature} onChange={e => set('temperature', Number(e.target.value))} /></Field>
             <Field label="Max tokens">{inp('maxTokens', 'number')}</Field>
@@ -1024,7 +1041,7 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
             <Field label="Allow live CSS restyling">{tog('allowCss')}</Field>
             <Field label="Allow feature code (JS, runs on click)">{tog('allowJs')}</Field>
             <Field label="Extra system instructions" hint="Appended to Beryl's system prompt for every model"><textarea className="adm-input" rows="4" value={s.systemExtra} onChange={e => set('systemExtra', e.target.value)} /></Field>
-            {profList('Chat model profiles', models.map(m => [m, short(m)]).concat(HF_CHAT_MODELS.map(h => [h.id, h.label])))}
+            {profList('Chat model profiles', models.map(m => [m, short(m)]).concat(nvidiaModels(s.nvidiaModels).map(h => [h.id, h.label])))}
           </div>)}
 
           {sec === 'center' && (<div className="adm-grid">
@@ -1321,6 +1338,7 @@ function App() {
   const [genBusy, setGenBusy] = useState(false);
   const [genErr, setGenErr] = useState('');
   const [hfToken, setHfToken] = useState(loadHfToken);
+  const nvidiaList = nvidiaModels(S.nvidiaModels);
   const [refImg, setRefImg] = useState(null);
   const refFileRef = useRef(null);
   const vidClips = useRef([]);
@@ -1335,10 +1353,33 @@ function App() {
 
   useEffect(() => { const f = feedRef.current; f.scrollTop = f.scrollHeight; }, [msgs]);
 
-  const refreshModels = () => fetch(S.gpuBase.replace(/\/+$/, '') + '/models', { headers: tunnelHdr(S.gpuBase) }).then(r => r.json())
-    .then(j => { const ids = (j.data || []).map(m => m.id); setOnline(true); setModels(ids); setModel(cur => (S.defaultModel && ids.includes(S.defaultModel) && cur === CFG.model) ? S.defaultModel : cur); })
-    .catch(() => { setOnline(false); setModels([]); });
-  useEffect(() => { refreshModels(); }, [S.gpuBase]);
+  // Two discovery sources, in order of truthfulness:
+  //   1. the model registry on the GPU box (scripts/model_registry.py) — reports what
+  //      is really installed, including size/quantisation
+  //   2. S.gpuBase/v1/models — the Ollama shim; used only if the registry is not running
+  // Both are read-only. Neither downloads or evicts anything.
+  const fetchModels = (url, path) => fetch(url.replace(/\/+$/, '') + path, { headers: tunnelHdr(url) }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+
+  const refreshModels = () => {
+    // Keep the selection valid: prefer Settings' default, else keep what is already
+    // selected, else fall back to whatever the GPU actually reports. A stale or
+    // deleted default must never leave the composer pointing at a model that is gone.
+    const apply = (ids) => {
+      setOnline(true); setModels(ids);
+      const valid = ids.concat(nvidiaList.map(n => n.id));
+      setModel(cur => {
+        if (S.defaultModel && ids.includes(S.defaultModel)) return S.defaultModel;
+        if (valid.includes(cur)) return cur;          // keeps an NVIDIA pick selected
+        if (ids.includes(CFG.model)) return CFG.model;
+        if (ids.includes(DEFAULT_LOCAL_MODEL)) return DEFAULT_LOCAL_MODEL;
+        return ids[0] || cur;
+      });
+    };
+    fetchModels(S.registryUrl, '/models').then(j => apply((j.data || []).map(m => m.id)))
+      .catch(() => fetchModels(S.gpuBase, '/models').then(j => apply((j.data || []).map(m => m.id)))
+        .catch(() => { setOnline(false); setModels([]); }));
+  };
+  useEffect(() => { refreshModels(); }, [S.gpuBase, S.registryUrl]);
   useEffect(() => { const r = document.documentElement.style; r.setProperty('--gold', S.accent); }, [S.accent]);
   useEffect(() => { if (S.autoSwitch) setCenterMode(m => m === 'builder' || modelMode(model) !== 'builder' ? modelMode(model) : m); }, [model]);
 
@@ -1540,14 +1581,14 @@ function App() {
         S.systemExtra, prof.persona, prof.instructions, vprof.persona, vprof.instructions].filter(x => x && x.trim()).join('\n\n');
       if (spoken) cutRef.current = '';
       const temp = prof.temperature !== undefined && prof.temperature !== '' ? Number(prof.temperature) : spoken ? S.voiceTemp : S.temperature;
-      const hf = HF_CHAT_MODELS.find(h => h.id === model);
-      const call = (base, id, auth) => fetch(base.replace(/\/+$/, '') + '/chat/completions', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, tunnelHdr(base), auth && hfToken ? { Authorization: 'Bearer ' + hfToken } : {}), body: JSON.stringify({ model: id, temperature: temp, max_tokens: S.maxTokens, messages: [{ role: 'system', content: sys }].concat(history), stream: S.stream }), signal: ac.signal });
-      let res;
-      if (hf) {
-        res = hfToken ? await call(hf.base, hf.id, true).catch(() => null) : null;
-        if (ac.signal.aborted) throw new DOMException('aborted', 'AbortError');
-        if (!res || !res.ok) { setLast('HF free GPU unavailable — using CPU space…'); res = await call(hf.fallback, hf.fallbackModel, false); }
-      } else res = await call(S.gpuBase, model, false);
+      const call = (base, id, headers) => fetch(base.replace(/\/+$/, '') + '/chat/completions', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, tunnelHdr(base), headers || {}), body: JSON.stringify({ model: id, temperature: temp, max_tokens: S.maxTokens, messages: [{ role: 'system', content: sys }].concat(history), stream: S.stream }), signal: ac.signal });
+      // Route on the backend that actually owns the selected model. NVIDIA goes to
+      // NVIDIA; everything else (GPU, pinned) goes to your own hardware. No silent
+      // cross-cloud fallback: if the chosen backend is down, the send fails loudly.
+      const nvidia = nvidiaList.some(n => n.id === model);
+      const res = nvidia
+        ? await call(NVIDIA_BASE, model, S.nvidiaKey ? { Authorization: 'Bearer ' + S.nvidiaKey } : {})
+        : await call(S.gpuBase, model);
       if (!res.ok) throw new Error('HTTP ' + res.status);
       if (!S.stream) { const j = await res.json(); out = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || ''; setLast(out || '…'); if (chunker) chunker.push(out); }
       else {
@@ -1594,7 +1635,8 @@ function App() {
     } catch (e) {
       if (e.name === 'AbortError') { setLast(out ? out.replace(/```[\s\S]*?(```|$)/g, '').trim() + ' …' : '(interrupted)', false, { raw: out || undefined }); busyRef.current = false; setBusy(false); return; }
       setOnline(false);
-      setLast("Couldn't reach " + (HF_CHAT_MODELS.some(h => h.id === model) ? 'Hugging Face' : S.gpuBase) + " (" + e.message + "). Start the local proxy (scripts/cors_proxy.py) and make sure the tunnel to the GPU VM is up. Open this page at https://aibruh-crane-builder-v1.static.hf.space, not inside huggingface.co.", true);
+      const who = nvidiaList.some(n => n.id === model) ? 'NVIDIA (' + NVIDIA_BASE + ')' : 'your local model server at ' + S.gpuBase;
+      setLast("Couldn't reach " + who + " (" + e.message + "). For local models start the proxy (scripts/cors_proxy.py) and make sure the tunnel to the GPU VM is up. Open this page at https://aibruh-crane-builder-v1.static.hf.space, not inside huggingface.co.", true);
     }
     busyRef.current = false; setBusy(false);
   };
@@ -1678,12 +1720,13 @@ function App() {
               </button>
               {menuOpen && (
                 <div style={{ position: 'absolute', bottom: '34px', left: 0, minWidth: '240px', background: 'var(--surface2)', border: '1px solid var(--border-mid)', borderRadius: '10px', padding: '4px', zIndex: 10, boxShadow: '0 10px 30px rgba(0,0,0,.5)' }}>
-                  <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>GPU · {S.nodeName.toUpperCase()}</div>
-                  {models.length ? models.map(id => <ModelRow key={id} id={id} label={short(id)} active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>offline — start the tunnel to use the GPU</div>}
+                  <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>STORED IN GPU · {S.nodeName.toUpperCase()}</div>
+                  {models.length ? models.map(id => <ModelRow key={id} id={id} label={short(id)} tag="LOCAL" tagColor="#34d399" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>none found — start the GPU, then the tunnel</div>}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
-                  <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>SMALL MODELS · HF API</div>
-                  {HF_CHAT_MODELS.map(({id, label}) => <ModelRow key={id} id={id} label={label} tag="FREE GPU" tagColor="#34d399" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />)}
+                  <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>NVIDIA CLOUD · NIM</div>
+                  {nvidiaList.length ? nvidiaList.map(({id, label, tag}) => <ModelRow key={id} id={id} label={label} tag={tag} tagColor="#76b900" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>add model ids in Settings → NVIDIA cloud</div>}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
+                                    <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>DIFFUSION · HF API</div>
                   {HF_DIFFUSION_MODELS.map(({id, label, tag}) => <ModelRow key={id} id={id} label={label} tag={tag.split(' · ')[1].toUpperCase()} tagColor={tag.includes('image') ? '#818cf8' : '#34d399'} active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />)}
                 </div>

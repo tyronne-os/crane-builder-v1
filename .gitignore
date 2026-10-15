@@ -1,2 +1,9 @@
 __pycache__/
 *.pyc
+
+# Obsolete. This script injected a hardcoded model list into frontend/app.html
+# pointing at localhost:11434, bypassing the CORS proxy on 11435, and would
+# re-add the phantom Qwen3.5-4B entry. The composer is now driven by what the
+# GPU actually reports (scripts/model_registry.py), so this contradicts the fix.
+# Kept on disk only, deliberately not committed.
+update_frontend_models.sh
