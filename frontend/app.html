@@ -1617,8 +1617,43 @@ function App() {
       // No silent cross-cloud fallback - if the chosen backend is down the send
       // fails and names the endpoint, rather than quietly moving you elsewhere.
       const onCpu = cpuModels.includes(model);
-      const target = nvidia ? NVIDIA_BASE : onCpu ? S.cpuBase : S.gpuBase;
-      const res = await call(target, model, nvidia && S.nvidiaKey ? { Authorization: 'Bearer ' + S.nvidiaKey } : {});
+      const provider = (model.split('/')[0]).toLowerCase();
+      const providerBases = {
+        anthropic: 'https://api.anthropic.com/v1',
+        openrouter: 'https://openrouter.ai/api/v1',
+        huggingface: 'https://api-inference.huggingface.co',
+        google: 'https://generativelanguage.googleapis.com',
+        'meta-muse': 'https://api.muse.meta.com/v1',
+        claude: 'https://api.anthropic.com/v1',
+        gemini: 'https://generativelanguage.googleapis.com',
+        openai: 'https://api.openai.com/v1'
+      };
+      const provBase = providerBases[provider];
+      const target = nvidia ? NVIDIA_BASE : provBase ? provBase : onCpu ? S.cpuBase : S.gpuBase;
+      let headers = {};
+      if (nvidia && S.nvidiaKey) headers = { Authorization: 'Bearer ' + S.nvidiaKey };
+      else if (provider === 'anthropic' || provider === 'claude') {
+        const key = S.providers?.anthropic || S.providers?.claude || '';
+        if (!key) throw new Error('Anthropic subscription key not set. Open Settings → Provider API Keys');
+        headers = { 'x-api-key': key, 'anthropic-version': '2023-06-01' };
+      } else if (provider === 'google' || provider === 'gemini') {
+        const key = S.providers?.google || S.providers?.gemini || '';
+        if (!key) throw new Error('Google API key not set');
+        headers = { 'x-goog-api-key': key };
+      } else if (provider === 'openrouter') {
+        const key = S.providers?.openrouter || '';
+        if (!key) throw new Error('OpenRouter key not set');
+        headers = { Authorization: 'Bearer ' + key };
+      } else if (provider === 'huggingface') {
+        const key = S.providers?.huggingface || '';
+        if (!key) throw new Error('HuggingFace key not set');
+        headers = { Authorization: 'Bearer ' + key };
+      } else if (provider === 'meta-muse') {
+        const key = S.providers?.['meta-muse'] || '';
+        if (!key) throw new Error('Meta Muse key not set');
+        headers = { Authorization: 'Bearer ' + key };
+      }
+      const res = await call(target, model, headers);
       if (!res.ok) throw new Error('HTTP ' + res.status);
       if (!S.stream) { const j = await res.json(); out = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || ''; setLast(out || '…'); if (chunker) chunker.push(out); }
       else {
