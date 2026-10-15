@@ -13,7 +13,9 @@ It is a read-only aggregator. It never downloads, loads or evicts anything.
   GET /health      per-backend reachability, for the composer's online indicator.
 
 Backends, each optional and each tolerated being down:
-  ollama  native /api/tags on 11434  (GGUF chat models)
+  llama   /v1/models on 11434        (GGUF chat models, CUDA, the primary endpoint)
+  cpu     /v1/models on 11437        (sub-1B GGUF, pure CPU, leaves VRAM to the 14B)
+  ollama  native /api/tags on 11434  (legacy; only reported if it is what is running)
   vllm    /v1/models on 8000         (safetensors chat models, higher throughput)
 
 Diffusion is deliberately NOT served here. Neither Ollama nor vLLM can generate
@@ -24,6 +26,8 @@ import os
 import urllib.error
 import urllib.request
 
+LLAMA = os.environ.get("CRANE_LLAMA", "http://127.0.0.1:11434")
+CPU = os.environ.get("CRANE_CPU", "http://127.0.0.1:11437")
 OLLAMA = os.environ.get("CRANE_OLLAMA", "http://127.0.0.1:11434")
 VLLM = os.environ.get("CRANE_VLLM", "http://127.0.0.1:8000")
 LISTEN_PORT = int(os.environ.get("CRANE_REGISTRY_PORT", "11436"))
@@ -44,6 +48,32 @@ def _get(url):
 
 def _gb(n):
     return None if not n else round(n / (1024 ** 3), 2)
+
+
+def from_llama_cpu():
+    """Sub-1B models served by a CPU-only llama-server. Kept distinct from the
+    GPU list so the composer can label them and the user knows which card is free."""
+    out = []
+    for m in _get(CPU + "/v1/models").get("data", []):
+        out.append({
+            "id": m.get("id"),
+            "object": "model",
+            "owned_by": "cpu",
+            "crane": {"source": "cpu", "backend": "llama-cpp", "modality": "chat", "device": "cpu"},
+        })
+    return out
+
+
+def from_llama_gpu():
+    out = []
+    for m in _get(LLAMA + "/v1/models").get("data", []):
+        out.append({
+            "id": m.get("id"),
+            "object": "model",
+            "owned_by": "gpu",
+            "crane": {"source": "gpu", "backend": "llama-cpp", "modality": "chat", "device": "cuda"},
+        })
+    return out
 
 
 def from_ollama():
@@ -84,7 +114,7 @@ def from_vllm():
     return out
 
 
-BACKENDS = (("ollama", from_ollama), ("vllm", from_vllm))
+BACKENDS = (("llama-gpu", from_llama_gpu), ("cpu", from_llama_cpu), ("ollama", from_ollama), ("vllm", from_vllm))
 
 
 def collect():
@@ -140,8 +170,8 @@ def main():
         def log_message(self, fmt, *args):
             pass
 
-    print("crane model registry: http://127.0.0.1:%d/v1/models (ollama=%s vllm=%s)"
-          % (LISTEN_PORT, OLLAMA, VLLM), flush=True)
+    print("crane model registry: http://127.0.0.1:%d/v1/models (gpu=%s cpu=%s ollama=%s vllm=%s)"
+          % (LISTEN_PORT, LLAMA, CPU, OLLAMA, VLLM), flush=True)
     ThreadingHTTPServer(("127.0.0.1", LISTEN_PORT), Handler).serve_forever()
 
 

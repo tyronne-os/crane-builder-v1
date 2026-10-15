@@ -1,15 +1,27 @@
 #!/usr/bin/env python3
-"""Lets the hosted Crane Builder page talk to a local Ollama.
+"""Lets the hosted Crane Builder page talk to the local model servers.
 
-Listens on 127.0.0.1:11435 and forwards to 127.0.0.1:11434 (your tunnel to the GPU VM),
+Listens on 127.0.0.1:11435 and forwards to 127.0.0.1:11434 (llama.cpp on the GPU VM),
 adding the CORS / private-network headers browsers require. Only the Crane Builder
 origins below are allowed, so other websites cannot use your GPU through it.
+
+Each upstream is forwarded on its own port, so the composer can reach the CPU-only
+server as well as the GPU one. The browser always talks to the proxy ports; the
+raw tunnel ports stay free for other tools.
+
+    11435 -> VM:11434   GPU  (CUDA llama-server)     <- the browser's gpuBase
+    11438 -> VM:11437   CPU  (CPU-only llama-server) <- the browser's cpuBase
+
+Note 11438, not 11437: the tunnel already forwards 11437, so listening there
+would collide with it and self-loop.
 """
 import http.client
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-UPSTREAM = ('127.0.0.1', 11434)
-LISTEN = ('127.0.0.1', 11435)
+UPSTREAMS = {"11435": ("127.0.0.1", 11434), "11438": ("127.0.0.1", 11437)}
+LISTEN = ("127.0.0.1", 11435)
+LISTEN_CPU = ("127.0.0.1", 11438)
 ALLOWED = ('https://aibruh-crane-builder-v1.static.hf.space', 'https://aibruh-crane-builder-v1.hf.space', 'https://huggingface.co')
 
 
@@ -32,14 +44,19 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def forward(self):
+        listen_port = self.server.server_address[1]
+        upstream = UPSTREAMS.get(str(listen_port))
+        if upstream is None:
+            # Registry port passes straight through to the registry.
+            upstream = ('127.0.0.1', listen_port)
         length = int(self.headers.get('Content-Length') or 0)
         body = self.rfile.read(length) if length else None
-        conn = http.client.HTTPConnection(*UPSTREAM, timeout=600)
+        conn = http.client.HTTPConnection(*upstream, timeout=600)
         try:
             conn.request(self.command, self.path, body, {'Content-Type': self.headers.get('Content-Type', 'application/json')})
             resp = conn.getresponse()
         except Exception as e:
-            msg = ('Cannot reach Ollama at %s:%d (%s). Is the tunnel running?' % (UPSTREAM + (e,))).encode()
+            msg = ('Cannot reach %s:%d (%s). Is the tunnel running?' % (upstream + (e,))).encode()
             self.send_response(502)
             self.cors()
             self.send_header('Content-Type', 'text/plain')
@@ -68,5 +85,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
-    print('Crane Builder proxy: http://%s:%d -> http://%s:%d  (Ctrl+C to stop)' % (LISTEN + UPSTREAM), flush=True)
-    ThreadingHTTPServer(LISTEN, Handler).serve_forever()
+    servers = []
+    for listen in (LISTEN, LISTEN_CPU):
+        s = ThreadingHTTPServer(listen, Handler)
+        servers.append(s)
+        print('Crane Builder proxy: http://%s:%d -> http://%s:%d'
+              % (listen + UPSTREAMS[str(listen[1])]), flush=True)
+    # First server owns the main loop; the second is served on its own thread.
+    threading.Thread(target=servers[1].serve_forever, daemon=True).start()
+    print('  registry: http://127.0.0.1:11436/v1/models (forwarded by the tunnel)', flush=True)
+    servers[0].serve_forever()

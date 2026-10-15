@@ -871,7 +871,7 @@ const DEFAULT_SETTINGS = {
   agentName: 'Beryl', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'qwen3tts', voice: 'beryl', voiceSpeed: 1.0, ttsUrl: 'http://127.0.0.1:8880/v1', ttsGpuUrl: 'http://127.0.0.1:8881/v1', autoSpeak: true, micMode: 'toggle',
   userName: '', vernacular: '', liveGreet: true, bargeIn: true, avatarOn: true, webResearch: true, listenLang: 'English', berylUrl: 'http://127.0.0.1:8882/v1', voiceTemp: 0.8, voiceV: 2, voiceFx: {},
   nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU',
-  registryUrl: 'http://localhost:11436/v1', nvidiaModels: [], nvidiaKey: '',
+  registryUrl: 'http://localhost:11436/v1', cpuBase: 'http://localhost:11438/v1', nvidiaModels: [], nvidiaKey: '',
   accent: '#eeca50', fontScale: 1, showAgent: true,
   cuEnabled: true, cuUrl: 'http://127.0.0.1:8765', cuToken: '', cuConfirm: true,
   profiles: {},
@@ -1321,6 +1321,7 @@ function App() {
   const feedRef = useRef(null);
   const [model, setModel] = useState(CFG.model);
   const [models, setModels] = useState([]);
+  const [cpuModels, setCpuModels] = useState([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [online, setOnline] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -1360,24 +1361,33 @@ function App() {
   // Both are read-only. Neither downloads or evicts anything.
   const fetchModels = (url, path) => fetch(url.replace(/\/+$/, '') + path, { headers: tunnelHdr(url) }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
 
+  // The registry reports every backend; we keep them apart because they are not
+  // interchangeable. `gpu` is the CUDA llama-server on 11434, `cpu` is the
+  // CPU-only one on 11437 for small models. Both speak /v1/chat/completions, so
+  // routing is decided by which list the model came from, not by hardcoding.
+  const apply = (entries) => {
+    const list = (entries || []).map(m => (typeof m === 'string' ? { id: m } : m));
+    const gpuIds = [], cpuIds = [];
+    list.forEach(m => { const c = m.crane || {}; (c.source === 'cpu' ? cpuIds : gpuIds).push(m.id); });
+    setOnline(gpuIds.length + cpuIds.length > 0);
+    setModels(gpuIds);
+    setCpuModels(cpuIds);
+    setModel(cur => {
+      if (S.defaultModel && gpuIds.includes(S.defaultModel)) return S.defaultModel;
+      if (gpuIds.includes(cur) || cpuIds.includes(cur)) return cur;   // keeps a CPU or NVIDIA pick
+      if (gpuIds.includes(CFG.model)) return CFG.model;
+      if (gpuIds.includes(DEFAULT_LOCAL_MODEL)) return DEFAULT_LOCAL_MODEL;
+      return gpuIds[0] || cpuIds[0] || cur;
+    });
+  };
+
+  // Single pass, no cascade: the registry is the truth. If it is unreachable we
+  // fall back to the configured chat endpoint, so a missing registry costs model
+  // detail (CPU/GPU split, sizes) rather than breaking the composer.
   const refreshModels = () => {
-    // Keep the selection valid: prefer Settings' default, else keep what is already
-    // selected, else fall back to whatever the GPU actually reports. A stale or
-    // deleted default must never leave the composer pointing at a model that is gone.
-    const apply = (ids) => {
-      setOnline(true); setModels(ids);
-      const valid = ids.concat(nvidiaList.map(n => n.id));
-      setModel(cur => {
-        if (S.defaultModel && ids.includes(S.defaultModel)) return S.defaultModel;
-        if (valid.includes(cur)) return cur;          // keeps an NVIDIA pick selected
-        if (ids.includes(CFG.model)) return CFG.model;
-        if (ids.includes(DEFAULT_LOCAL_MODEL)) return DEFAULT_LOCAL_MODEL;
-        return ids[0] || cur;
-      });
-    };
-    fetchModels(S.registryUrl, '/models').then(j => apply((j.data || []).map(m => m.id)))
-      .catch(() => fetchModels(S.gpuBase, '/models').then(j => apply((j.data || []).map(m => m.id)))
-        .catch(() => { setOnline(false); setModels([]); }));
+    fetchModels(S.registryUrl, '/models').then(j => apply(j.data))
+      .catch(() => fetchModels(S.gpuBase, '/models').then(j => apply(j.data)))
+        .catch(() => { setOnline(false); setModels([]); setCpuModels([]); });
   };
   useEffect(() => { refreshModels(); }, [S.gpuBase, S.registryUrl]);
   useEffect(() => { const r = document.documentElement.style; r.setProperty('--gold', S.accent); }, [S.accent]);
@@ -1586,9 +1596,13 @@ function App() {
       // NVIDIA; everything else (GPU, pinned) goes to your own hardware. No silent
       // cross-cloud fallback: if the chosen backend is down, the send fails loudly.
       const nvidia = nvidiaList.some(n => n.id === model);
-      const res = nvidia
-        ? await call(NVIDIA_BASE, model, S.nvidiaKey ? { Authorization: 'Bearer ' + S.nvidiaKey } : {})
-        : await call(S.gpuBase, model);
+      // Route on where the model actually lives: NVIDIA cloud, the CPU-only
+      // llama-server for small models, or the CUDA one for everything else.
+      // No silent cross-cloud fallback - if the chosen backend is down the send
+      // fails and names the endpoint, rather than quietly moving you elsewhere.
+      const onCpu = cpuModels.includes(model);
+      const target = nvidia ? NVIDIA_BASE : onCpu ? S.cpuBase : S.gpuBase;
+      const res = await call(target, model, nvidia && S.nvidiaKey ? { Authorization: 'Bearer ' + S.nvidiaKey } : {});
       if (!res.ok) throw new Error('HTTP ' + res.status);
       if (!S.stream) { const j = await res.json(); out = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || ''; setLast(out || '…'); if (chunker) chunker.push(out); }
       else {
@@ -1635,7 +1649,7 @@ function App() {
     } catch (e) {
       if (e.name === 'AbortError') { setLast(out ? out.replace(/```[\s\S]*?(```|$)/g, '').trim() + ' …' : '(interrupted)', false, { raw: out || undefined }); busyRef.current = false; setBusy(false); return; }
       setOnline(false);
-      const who = nvidiaList.some(n => n.id === model) ? 'NVIDIA (' + NVIDIA_BASE + ')' : 'your local model server at ' + S.gpuBase;
+      const who = nvidia ? 'NVIDIA (' + NVIDIA_BASE + ')' : cpuModels.includes(model) ? 'the CPU endpoint at ' + S.cpuBase : 'your local model server at ' + S.gpuBase;
       setLast("Couldn't reach " + who + " (" + e.message + "). For local models start the proxy (scripts/cors_proxy.py) and make sure the tunnel to the GPU VM is up. Open this page at https://aibruh-crane-builder-v1.static.hf.space, not inside huggingface.co.", true);
     }
     busyRef.current = false; setBusy(false);
@@ -1722,6 +1736,9 @@ function App() {
                 <div style={{ position: 'absolute', bottom: '34px', left: 0, minWidth: '240px', background: 'var(--surface2)', border: '1px solid var(--border-mid)', borderRadius: '10px', padding: '4px', zIndex: 10, boxShadow: '0 10px 30px rgba(0,0,0,.5)' }}>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>STORED IN GPU · {S.nodeName.toUpperCase()}</div>
                   {models.length ? models.map(id => <ModelRow key={id} id={id} label={short(id)} tag="LOCAL" tagColor="#34d399" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>none found — start the GPU, then the tunnel</div>}
+                  <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
+                  <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>CPU · NO VRAM USED</div>
+                  {cpuModels.length ? cpuModels.map(id => <ModelRow key={id} id={id} label={short(id)} tag="CPU" tagColor="#94a3b8" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>none — start the CPU llama-server on 11437</div>}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>NVIDIA CLOUD · NIM</div>
                   {nvidiaList.length ? nvidiaList.map(({id, label, tag}) => <ModelRow key={id} id={id} label={label} tag={tag} tagColor="#76b900" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>add model ids in Settings → NVIDIA cloud</div>}
