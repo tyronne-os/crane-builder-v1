@@ -540,7 +540,7 @@ const VOICE_LABELS = { listening:'LISTENING', muted:'MUTED', speaking:'SPEAKING'
 // Default to the model known to be resident on berylize-node. Overridable with ?model=
 // or from Settings. If this id is absent, refreshModels() snaps to a model that exists,
 // so a stale default degrades to "some real model" instead of a dead selection.
-const DEFAULT_LOCAL_MODEL = 'hf.co/mradermacher/Qwen2.5-14B-Instruct-Heretic-GGUF:Q4_K_M';
+const DEFAULT_LOCAL_MODEL = 'hf.co/mradermacher/Qwen2.5-Coder-1.5B-Instruct-abliterated-i1-GGUF:Q4_K_M';
 const CFG = (() => {
   const q = new URLSearchParams(location.search);
   return { base: (q.get('api') || 'http://localhost:11435/v1').replace(/\/+$/, ''), model: q.get('model') || DEFAULT_LOCAL_MODEL };
@@ -868,7 +868,7 @@ const DEFAULT_SETTINGS = {
   projectName: 'crane-it', defaultTab: 'preview', showStatus: true, shipTarget: 'hf',
   gpuBase: CFG.base, defaultModel: '', temperature: 0.4, maxTokens: 2048, stream: true, systemExtra: '', allowCss: true, allowJs: true,
   defaultMode: 'builder', autoSwitch: true, imgApi: 'https://api-inference.huggingface.co/models/Qwen/Qwen-Image-2.1', vidApi: 'https://api-inference.huggingface.co/models/Lightricks/LTX-2.5', clipSeconds: 8, autoStitch: true,
-  agentName: 'Beryl', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'qwen3tts', voice: 'beryl', voiceSpeed: 1.0, ttsUrl: 'http://127.0.0.1:8880/v1', ttsGpuUrl: 'http://127.0.0.1:8881/v1', autoSpeak: true, micMode: 'toggle',
+  agentName: 'Amanda', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'qwen3tts', voice: 'amanda', voiceSpeed: 1.0, ttsUrl: 'http://127.0.0.1:11437/v1', ttsGpuUrl: 'http://127.0.0.1:11437/v1', autoSpeak: true, micMode: 'toggle',
   userName: '', vernacular: '', liveGreet: true, bargeIn: true, avatarOn: true, webResearch: true, listenLang: 'English', berylUrl: 'http://127.0.0.1:8882/v1', voiceTemp: 0.8, voiceV: 2, voiceFx: {},
   nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU',
   registryUrl: 'http://localhost:11436/v1', cpuBase: 'http://localhost:11438/v1', nvidiaModels: [], nvidiaKey: '', nvidiaEnterpriseKey: '', nvidiaEnterpriseModels: [],
