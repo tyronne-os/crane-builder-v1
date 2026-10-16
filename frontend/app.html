@@ -1,6 +1,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Crane Builder</title>
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon.png">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500;600&family=Instrument+Serif:ital@1&display=swap">
 <style>
 /* ── single dark-first design — IDE surface ── */
@@ -578,6 +581,8 @@ const CFG = (() => {
 const SYSTEM = `You are Beryl, the build agent inside Crane Builder, made by Beryl Labs. You run on the open-weights model "MODEL_NAME" on the user's own GPU server (berylize-node); say so if asked which model you are. Be concise and direct.
 
 You can change this page's design live. When the user asks for a visual change, reply with one short sentence, then ONE fenced css block containing the rules; the page applies it instantly (use !important when overriding existing rules). If the user asks for new behavior or a feature that CSS cannot do, reply with one short sentence and ONE fenced js block (plain browser JavaScript, no imports, runs once; it may create elements and append them to document.body); the user clicks Run to apply it. Put nothing but code inside fences. If no UI change is requested, just answer normally.
+
+You are also a full project builder. Whenever the user asks you to build, create, ship or design a whole project — an app, site, page, tool, dashboard, anything — you deliver it as complete fenced blocks: one \`\`\`html block with the page markup, one \`\`\`css block with the styles, one \`\`\`js block with the behavior. The centre preview renders them live as you write, so keep each block complete and self-contained, no placeholders, no "rest of the code here". Any model running here is a full builder: whichever one the user selects, you can build anything end to end.
 
 Page structure: .app > header.header (.logo > .logo-c .logo-rane .logo-tag, .divider-v, .btn-project, .btn-new, .header-spacer, .tab-group > .tab, .status-pill > .status-dot, .btn-ship) and .body-grid with three columns. Left: aside.chat-sidebar (.messages > .msg.me/.msg.bot > .msg-meta .msg-bubble .msg-steps > .step; .composer-wrap > .composer > textarea + .composer-row > .tool-btn, .model-chip, .composer-spacer, .btn-mic, .btn-send). Center: main.main-panel (.url-bar > .url-text .live-badge; .preview-frame > .idle-state > .idle-icon .idle-title .idle-sub .idle-pulse, or .code-pane). Right: aside.agent-sidebar (.agent-card > img, .agent-card-overlay, .live-badge-pill, .voice-overlay > .agent-name .agent-role, .voice-canvas-wrap > .voice-canvas-label, canvas; .agent-controls > .ctrl-btn; .transcript-strip > .transcript-label).
 CSS variables on :root: --bg #09090b, --surface #111113, --surface2 #18181b, --border, --border-mid, --fg, --fg-2..--fg-5 (text greys), --gold #eeca50, --gold-dim #c6a23a, --gold-dark #6c4a08, --gold-grad, --gold-chrome, --green #34d399, --red #dc2626. Fonts: Geist (UI), Geist Mono (labels), Instrument Serif (accents).
@@ -1479,9 +1484,12 @@ function App() {
   // Live NIM catalog: when a NVIDIA key is set, everything it unlocks gets pulled in
   // — GLM, Llama, DeepSeek and friends — merged with the hand-picked ids.
   const [nvidiaCatalog, setNvidiaCatalog] = useState([]);
+  const [nvidiaEntCatalog, setNvidiaEntCatalog] = useState([]);
   const nvidiaCatalogList = nvidiaCatalog.map(id => ({ id, label: short(id), tag: 'NIM' }));
   const nvidiaAll = [], nvidiaSeen = {};
   nvidiaList.concat(nvidiaCatalogList).forEach(n => { if (!nvidiaSeen[n.id]) { nvidiaSeen[n.id] = 1; nvidiaAll.push(n); } });
+  const nvidiaEntAll = [], nvidiaEntSeen = {};
+  (S.nvidiaEnterpriseModels || []).concat(nvidiaEntCatalog).forEach(id => { if (!nvidiaEntSeen[id]) { nvidiaEntSeen[id] = 1; nvidiaEntAll.push(id); } });
   const cpuOthers = cpuModels.filter(id => id !== DEFAULT_LOCAL_MODEL);
   // OPENCODE · the free OpenRouter catalog, from the public models.dev registry —
   // the same one the OpenCode editor reads. Filtered to :free chat models, fetched
@@ -1503,6 +1511,30 @@ function App() {
   // GPU is engaged, priced to the penny at S.gpuRate per hour. Nothing leaves the page.
   const [gpuMeter, setGpuMeter] = useState(() => { try { return JSON.parse(localStorage.getItem('crane.gpuMeter') || '{"on":false,"seconds":0,"cents":0}'); } catch (e) { return { on: false, seconds: 0, cents: 0 }; } });
   const [updateReady, setUpdateReady] = useState('');
+  // GitHub — direct repo access with the user's token (GITHUB_TOKEN in Providers).
+  // Live fetch on every open, so a repo made in the terminal appears the next time
+  // the panel opens. Clicking a repo starts a fresh Crane project seeded with its
+  // README, so whichever model is selected can build from it immediately.
+  const [ghOpen, setGhOpen] = useState(false);
+  const [ghRepos, setGhRepos] = useState(null);
+  const [ghErr, setGhErr] = useState('');
+  const ghApi = (path, raw) => fetch('https://api.github.com' + path, { headers: Object.assign({ Authorization: 'Bearer ' + (S.providers?.github || '') }, raw ? { Accept: 'application/vnd.github.raw' } : {}) })
+    .then(r => r.ok ? r.json() : Promise.reject(new Error(r.status === 401 ? 'token rejected (401)' : r.status === 404 ? 'not found' : 'HTTP ' + r.status)));
+  const openGh = () => {
+    setGhOpen(o => !o);
+    if (!S.providers?.github) { const key = prompt('GitHub token — GITHUB_TOKEN, a classic PAT with repo scope from github.com/settings/tokens'); if (key) setSetting('providers', {...S.providers, github: key.trim()}); }
+    setGhRepos(null); setGhErr('');
+    ghApi('/user/repos?sort=updated&per_page=100').then(setGhRepos).catch(e => setGhErr(e.message));
+  };
+  const buildFromRepo = (repo) => {
+    setGhOpen(false);
+    const readmeP = ghApi('/repos/' + repo.full_name + '/readme', true).then(r => String(r).slice(0, 1500)).catch(() => '');
+    readmeP.then(readme => {
+      newProject(repo.name);
+      const brief = 'Build a project based on the GitHub repo ' + repo.full_name + (repo.description ? ' — ' + repo.description : '') + (readme ? '. README excerpt:\n\n' + readme : '');
+      setTimeout(() => sendRef.current(brief, {}), 250);
+    });
+  };
   const [refImg, setRefImg] = useState(null);
   const refFileRef = useRef(null);
   const vidClips = useRef([]);
@@ -1578,6 +1610,15 @@ function App() {
       .then(j => setNvidiaCatalog((j.data || []).map(m => m.id).filter(Boolean)))
       .catch(() => setNvidiaCatalog([]));
   }, [S.nvidiaKey]);
+  // The Enterprise key unlocks its own catalog — the exclusive digital-human and
+  // advanced models — pulled live into the ENTERPRISE section, same as NIM.
+  useEffect(() => {
+    if (!S.nvidiaEnterpriseKey) { setNvidiaEntCatalog([]); return; }
+    fetch(NVIDIA_BASE + '/models', { headers: { Authorization: 'Bearer ' + S.nvidiaEnterpriseKey } })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => setNvidiaEntCatalog((j.data || []).map(m => m.id).filter(Boolean)))
+      .catch(() => setNvidiaEntCatalog([]));
+  }, [S.nvidiaEnterpriseKey]);
   // GPU meter: a cent-accurate clock while a GPU session is engaged. Auto-join
   // when a diffusion model puts the centre pane in movie-screen mode; auto-leave
   // when you pick a chat model. Click the pill to override manually.
@@ -2065,7 +2106,7 @@ function App() {
             <button className="tool-btn" title="Link">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
             </button>
-            <button className="tool-btn" title="GitHub">
+            <button className="tool-btn" title="GitHub — your repos" onClick={openGh}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.1-1.3-.3-2.5-1-3.5.3-1.2.3-2.4 0-3.5 0 0-1 0-3 1.5-2.6-.5-5.4-.5-8 0C6 2 5 2 5 2c-.3 1.1-.3 2.3 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.4.5-.7 1-.9 1.6-.2.6-.2 1.3-.1 1.9v4M9 18c-4.5 2-5-2-7-2"/></svg>
             </button>
             <button className="tool-btn" title="Commands">
@@ -2090,7 +2131,7 @@ function App() {
                   {nvidiaAll.length ? nvidiaAll.map(({id, label, tag}) => <ModelRow key={id} id={id} label={label} tag={tag} tagColor="#76b900" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>{S.nvidiaKey ? 'catalog came back empty — check the key in Settings' : 'enter your NVIDIA NIM key below — the full catalog loads automatically'}</div>}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>NVIDIA ENTERPRISE · DIGITAL HUMANS</div>
-                  {(S.nvidiaEnterpriseModels || []).length ? (S.nvidiaEnterpriseModels || []).map(id => <ModelRow key={id} id={id} label={short(id)} tag="NVIDIA ENT" tagColor="#ff7a00" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>add model ids in Settings → NVIDIA Enterprise</div>}
+                  {nvidiaEntAll.length ? nvidiaEntAll.map(id => <ModelRow key={id} id={id} label={short(id)} tag="NVIDIA ENT" tagColor="#ff7a00" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>{S.nvidiaEnterpriseKey ? 'enterprise catalog came back empty — paste ids in Settings' : 'enter your NVIDIA Enterprise key below — its catalog loads automatically'}</div>}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>OPENCODE · FREE VIA OPENROUTER</div>
                   {opencodeModels === null ? (
@@ -2315,6 +2356,34 @@ function App() {
 
   </div>
   {projOpen && <ProjectSwitcher current={activeProjectId} onSwitch={switchProject} onNew={newProject} onDelete={deleteProject} onClose={() => setProjOpen(false)} />}
+  {ghOpen && (
+    <div className="proj-overlay" onClick={e => { if (e.target === e.currentTarget) setGhOpen(false); }}>
+      <div className="proj-panel">
+        <div className="proj-head">
+          <h3>GITHUB · YOUR REPOS</h3>
+          <button className="proj-item-del" onClick={() => setGhOpen(false)} style={{opacity:1}}>×</button>
+        </div>
+        <div className="proj-list">
+          {ghErr ? (
+            <div className="proj-item-meta" style={{padding:'10px 12px',color:'#fca5a5'}}>GitHub: {ghErr} — set github in the model menu → Providers</div>
+          ) : ghRepos === null ? (
+            <div className="proj-item-meta" style={{padding:'10px 12px'}}>loading repos…</div>
+          ) : !ghRepos.length ? (
+            <div className="proj-item-meta" style={{padding:'10px 12px'}}>no repos came back for this token</div>
+          ) : ghRepos.map(r => (
+            <button key={r.id} className="proj-item" onClick={() => buildFromRepo(r)}>
+              <span className="proj-item-dot"></span>
+              <span className="proj-item-body">
+                <span className="proj-item-name">{r.full_name}</span>
+                <span className="proj-item-meta">{(r.language || 'code') + ' · updated ' + new Date(r.updated_at).toLocaleDateString() + (r.description ? ' · ' + String(r.description).slice(0, 60) : '')}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+        <div className="proj-footer"><div className="proj-item-meta" style={{padding:'2px 4px'}}>click a repo → new Crane project seeded with its README · make a repo in your terminal and it appears here next open</div></div>
+      </div>
+    </div>
+  )}
   {profEdit && <ProfileEditor key={profEdit} id={profEdit} profile={S.profiles[profEdit]} gpuBase={S.gpuBase} onSave={p => setProfile(profEdit, p)} onClose={() => setProfEdit(null)} />}
   {adminOpen && <AdminPanel s={S} set={setSetting} onEditProfile={setProfEdit} onClose={() => setAdminOpen(false)} models={models} online={online} onTest={refreshModels}
     onClearChat={() => setMsgs([])} onResetPatches={() => setPatches([])} voiceErr={voiceErr} />}
