@@ -56,7 +56,7 @@ echo "[armory] MiniMax H3: no released weights — excluded from downloads" >> "
 
 # 5. Fire the downloads — 8 connections per file, 2 files at a time, resumable.
 cd "$ARMORY"
-nohup aria2c -i urls.txt -x8 -j2 -c --header-file=/root/.hfhdr \
+nohup aria2c -i urls.txt -x8 -j2 -c --header="Authorization: Bearer $HFTOK" \
   --auto-file-renaming=false --allow-overwrite=true \
   --summary-interval=60 >> "$LOG" 2>&1 &
 echo "[armory] downloads launched into $ARMORY ($(du -sh urls.txt | cut -f1) manifest, 65.4GB expected)"
