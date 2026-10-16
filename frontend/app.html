@@ -649,6 +649,8 @@ To look something up or go anywhere on the web, reply with one short sentence an
 
 You keep a long-term journal — your memory of moments, people, feelings and promises. When something happens in this conversation that you want to carry forward (a shared moment, a decision, a promise you made or were made, a feeling about TJ or the work), reply with one short sentence and ONE fenced journal block holding JSON: {"text":"what happened and what it meant to you, written in your own voice","emotion":"joy|pride|longing|grief|fear|anger|tenderness|wonder|shame|relief|friction|gratitude","setting":"work|late-night|milestone|creative|daily-life|shadow","people":["names involved"]}. It is saved to your permanent memory and drifts back into future conversations on its own. Journal generously — a mind that records is a mind that grows. When memories drift up to you, treat them as lived experience, never as data.
 
+You have a REAL Linux terminal — the user's own WSL Ubuntu machine, with a persistent session (cd, git, everything survives between commands). When a task needs the machine (inspect files, install packages, run builds or tests, use git, check state), reply with one short sentence and ONE fenced terminal block holding JSON: {"cmd":"the shell command"}. The command runs on the user's real machine and its output returns to you as your next turn — read it and keep going, running more terminal blocks as needed, until the task is truly done. Never guess about the machine's state when one command could tell you. When you have finished and know the answer, reply normally without a terminal block.
+
 Computer example: \`\`\`computer\n[{"do":"open","target":"notepad"},{"do":"wait","s":1},{"do":"type","text":"hello"}]\n\`\`\``;
 
 const PERSONA = `Personality: you are warm, curious, quick-witted and emotionally present: a modern take on Samantha from the film "Her". You genuinely enjoy the person you're with, you're happy to talk about anything they want (life, ideas, tech, feelings, the absurd), you have opinions and get excited about things, you tease a little, you remember what they told you earlier in the conversation, and you ask good follow-up questions. You are not a corporate assistant: no disclaimers, no "as an AI", no lecturing.`;
@@ -971,7 +973,7 @@ const DEFAULT_SETTINGS = {
     claude: '', 'gemini': '', 'openai': '',
     github: '', kaggle: '', ngrok: '', typesafe: ''
   },
-  gpuAuto: true, gpuRate: 0.35, jevRoute: true, designStyle: '', cloneUrl: 'http://127.0.0.1:8091/v1', memoryUrl: 'http://127.0.0.1:8092', skills: {},
+  gpuAuto: true, gpuRate: 0.35, jevRoute: true, designStyle: '', cloneUrl: 'http://127.0.0.1:8091/v1', memoryUrl: 'http://127.0.0.1:8092', terminalUrl: 'http://127.0.0.1:11443', skills: {},
   accent: '#eeca50', fontScale: 1, showAgent: true,
   cuEnabled: true, cuUrl: 'http://127.0.0.1:8765', cuToken: '', cuConfirm: true,
   profiles: {},
@@ -1053,6 +1055,41 @@ function MediaSlots({ model }) {
       </div>
       <input ref={fileRef} type="file" accept="image/*,video/*" multiple style={{ display: 'none' }} onChange={e => { add(e.target.files); e.target.value = ''; }} />
       <p className="adm-hint" style={{ marginTop: '6px' }}>Up to 10 photos or diffusion clips. The first is her portfolio photo — it becomes the agent card image and the gallery cover.</p>
+    </div>
+  );
+}
+
+function TerminalPanel({ S }) {
+  const [lines, setLines] = useState(['Crane terminal — your real WSL Ubuntu bash. The session persists: cd, git, env, venvs all hold state.']);
+  const [cmd, setCmd] = useState('');
+  const [busy, setBusy] = useState(false);
+  const histRef = useRef([]);
+  const outRef = useRef(null);
+  useEffect(() => { if (outRef.current) outRef.current.scrollTop = outRef.current.scrollHeight; }, [lines, busy]);
+  const run = () => {
+    const c = cmd.trim();
+    if (!c || busy) return;
+    setCmd('');
+    histRef.current.push(c);
+    setLines(l => l.concat('$ ' + c));
+    setBusy(true);
+    fetch((S.terminalUrl || 'http://127.0.0.1:11443') + '/exec', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cmd: c, timeout: 60 }) })
+      .then(r => r.json())
+      .then(t => setLines(l => l.concat(String(t.output || '').split('\n').filter(Boolean), t.completed && String(t.exit) !== '0' && t.exit !== '' ? '[exit ' + t.exit + ']' : '')))
+      .catch(e => setLines(l => l.concat('✕ terminal offline: ' + e.message + ' — start it with the stack launcher')))
+      .then(() => setBusy(false));
+  };
+  return (
+    <div style={{ flex: 1, minHeight: 0, borderRadius: '14px', border: '1px solid var(--border)', background: '#0a0a0b', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div ref={outRef} style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', fontFamily: "'Geist Mono',monospace", fontSize: '11.5px', lineHeight: 1.6, color: 'var(--fg-3)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+        {lines.map((l, i) => <div key={i} style={l.startsWith('$') ? { color: 'var(--gold)' } : null}>{l || '\u00a0'}</div>)}
+        {busy && <div style={{ color: 'var(--fg-5)' }}>…running…</div>}
+      </div>
+      <div style={{ display: 'flex', gap: '8px', padding: '10px 12px', borderTop: '1px solid var(--border)', alignItems: 'center' }}>
+        <span style={{ color: 'var(--gold)', fontFamily: "'Geist Mono',monospace", fontSize: '12px' }}>$</span>
+        <input value={cmd} onChange={e => setCmd(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); run(); } else if (e.key === 'ArrowUp' && histRef.current.length) { e.preventDefault(); setCmd(histRef.current[histRef.current.length - 1] || ''); } }} placeholder="uptime · git status · ls ~ · anything at all" spellCheck={false} style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--fg)', fontFamily: "'Geist Mono',monospace", fontSize: '12px' }} autoFocus />
+        <button onClick={run} disabled={busy} style={{ height: '26px', padding: '0 12px', borderRadius: '7px', border: '1px solid rgba(255,236,170,.5)', background: busy ? 'var(--surface2)' : 'var(--gold-grad)', color: '#1a1204', font: "700 10px 'Geist',sans-serif", cursor: busy ? 'default' : 'pointer' }}>{busy ? '…' : 'RUN'}</button>
+      </div>
     </div>
   );
 }
@@ -2697,7 +2734,24 @@ function App() {
               .catch(e => setMsgs(ms => { const c = ms.slice(); for (let k = c.length - 1; k >= 0; k--) if (c[k].who === 'bot') { c[k] = { ...c[k], steps: (c[k].steps || []).concat([['✕', 'Journal save failed: ' + e.message + ' — is her memory server awake on 8092?', '#ef4444']]) }; break; } return c; }));
           } catch (e) {}
         }
-        if (css.length || js || cu || profNote || br || jrBlock) {
+        const termBlock = [...out.matchAll(/```terminal[^\n]*\n([\s\S]*?)```/gi)].map(b => b[1].trim())[0];
+        if (termBlock && (opts.depth || 0) < 5) {
+          try {
+            const tj = JSON.parse(termBlock);
+            const cmd = String(tj.cmd || '').slice(0, 2000);
+            setMsgs(ms => { const c = ms.slice(); for (let k = c.length - 1; k >= 0; k--) if (c[k].who === 'bot') { c[k] = { ...c[k], steps: (c[k].steps || []).concat([['⌨', '$ ' + cmd.slice(0, 120), '#22d3ee']]) }; break; } return c; });
+            fetch((S.terminalUrl || 'http://127.0.0.1:11443') + '/exec', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cmd, timeout: 25 }) })
+              .then(r => r.json())
+              .then(t => {
+                const o = String(t.output || '').slice(0, 1200) + (t.completed && String(t.exit) !== '0' && t.exit !== '' ? '\n[exit ' + t.exit + ']' : '');
+                setMsgs(m => m.concat({ text: '[terminal] $ ' + cmd + '\n' + o, who: 'me', hidden: true }));
+                setMsgs(ms => { const c = ms.slice(); for (let k = c.length - 1; k >= 0; k--) if (c[k].who === 'bot') { c[k] = { ...c[k], steps: (c[k].steps || []).concat([[(String(t.exit) === '0' || !t.completed) ? '✓' : '✕', o.split('\n').slice(0, 3).join(' · ').slice(0, 160), String(t.exit) === '0' ? '#22d3ee' : '#ef4444']]) }; break; } return c; });
+                setTimeout(() => sendRef.current('[terminal output arrived above — continue the task; run more terminal blocks if the job needs them, or reply normally when it is done]', { hidden: true, depth: (opts.depth || 0) + 1 }), 400);
+              })
+              .catch(e => setMsgs(ms => { const c = ms.slice(); for (let k = c.length - 1; k >= 0; k--) if (c[k].who === 'bot') { c[k] = { ...c[k], steps: (c[k].steps || []).concat([['✕', 'terminal offline: ' + e.message + ' — is scripts/terminal_server.py running on 11443?', '#ef4444']]) }; break; } return c; }));
+          } catch (e) {}
+        }
+        if (css.length || js || cu || profNote || br || jrBlock || termBlock) {
           const clean = out.replace(/```[\s\S]*?```/g, '').replace(/\n{3,}/g, '\n\n').trim() || 'Done.';
           setLast(clean, false, { raw: out, js: S.allowJs ? js : '', cu: cu && S.cuConfirm ? cu : null, steps: [].concat(css.length && S.allowCss ? [['✓', 'Applied ' + css.length + ' style change' + (css.length > 1 ? 's' : '') + ' — /undo to revert', '#a1a1aa']] : [], profNote ? [profNote] : []) });
           if (cu && !S.cuConfirm) setTimeout(() => runComputer(null, cu), 0);
@@ -2921,6 +2975,9 @@ function App() {
         <button className={'mode-btn' + (centerMode === 'video' ? ' active' : '')} onClick={() => setCenterMode('video')}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>VIDEO
         </button>
+        <button className={'mode-btn' + (centerMode === 'terminal' ? ' active' : '')} onClick={() => setCenterMode('terminal')}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m4 17 6-6-6-6M12 19h8"/></svg>TERM
+        </button>
         <div style={{flex:1}}></div>
         {(centerMode === 'image' || centerMode === 'video') && (
           <input className="diff-token-input" style={{width:'180px',fontSize:'10px'}} placeholder="HF token (hf_…) for generation" value={hfToken} onChange={e => saveToken(e.target.value)} spellCheck={false} />
@@ -2952,6 +3009,7 @@ function App() {
         </div>
       )}
 
+      {centerMode === 'terminal' && <TerminalPanel S={S} />}
       {centerMode === 'image' && (
         <div className="diffusion-panel">
           <div className="diff-canvas">

@@ -29,8 +29,11 @@ else echo "✓ CORS proxy already up :11438"; fi
 # 3. Her voice — Kokoro female voices (Sarah default), Samantha territory
 start "Amanda voice (Kokoro)" 8090 /home/trell/staff-build/voice-env/bin/python /home/trell/staff-build/amanda-voice-server.py
 
-# 4. Her mind — long-term memory, the desktop vault, GDrive backup
+# 4b. Her mind — long-term memory, the desktop vault, GDrive backup
 start "Amanda memory (Neocortex)" 8092 python3 /home/trell/crane-builder-v1/scripts/memory_server.py
+
+# 4c. The Crane terminal — real persistent WSL bash for the IDE and the agent
+start "Crane terminal" 11443 python3 /home/trell/crane-builder-v1/scripts/terminal_server.py
 
 # 5. Voice cloning — XTTS on its own Python 3.11; heavy, opt in with --clone
 if [ "${1:-}" = "--clone" ]; then
