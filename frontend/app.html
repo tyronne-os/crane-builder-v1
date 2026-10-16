@@ -1813,7 +1813,7 @@ function App() {
     dictRef.current = r;
     try { r.start(); setDictating(true); setVoiceErr(''); } catch (e) { dictRef.current = null; }
   };
-  // Dyad-style live preview: the latest html/css/js fences Amanda writes become the
+  // Beryl Streaming Artifacts: the latest html/css/js fences Amanda writes become the
   // page shown in the centre pane — the first code line shows up live. The iframe is
   // sandboxed without allow-same-origin, so preview code cannot read this app, your
   // session or your cookies. It renders, and that is all it can do.
@@ -2647,10 +2647,16 @@ function App() {
       </div>
 
       {centerMode === 'builder' && (
+        <div className="url-bar">
+          <span className="url-text">{previewDoc ? 'beryl://streaming-artifacts/live' : 'beryl://streaming-artifacts/idle'}</span>
+          {previewDoc ? <span className="live-badge">● STREAMING</span> : null}
+        </div>
+      )}
+      {centerMode === 'builder' && (
         <div className="preview-frame">
           {tab === 'preview' ? (
             previewDoc ? (
-              <iframe title="Crane live preview" srcDoc={previewDoc} sandbox="allow-scripts allow-forms allow-modals allow-popups" style={{width:'100%',height:'100%',border:0,background:'#fff'}}></iframe>
+              <iframe title="Beryl Streaming Artifacts" srcDoc={previewDoc} sandbox="allow-scripts allow-forms allow-modals allow-popups" style={{width:'100%',height:'100%',border:0,background:'#fff'}}></iframe>
             ) : (
             <div className="idle-state" id="idlePane">
               <div className="idle-icon">
