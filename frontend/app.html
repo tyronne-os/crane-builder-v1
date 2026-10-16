@@ -1855,6 +1855,7 @@ function App() {
   // powers it themselves: a toggle, a live connectivity light, a usage clock.
   const [hfGpuModels, setHfGpuModels] = useState([]);
   const [hfGpuConnected, setHfGpuConnected] = useState(false);
+  const [hfGpuErr, setHfGpuErr] = useState('');
   const [hfGpuTimer, setHfGpuTimer] = useState(() => { try { return JSON.parse(localStorage.getItem('crane.hfGpu') || '{"seconds":0,"requests":0}'); } catch (e) { return { seconds: 0, requests: 0 }; } });
   const [menuOpen, setMenuOpen] = useState(false);
   const [online, setOnline] = useState(null);
@@ -2020,14 +2021,17 @@ function App() {
   // The HF GPU bay: one fetch lists the whole router catalog; the same call is
   // the connectivity light. Rechecked every 60s while powered on.
   const HF_ROUTER = 'https://router.huggingface.co/v1';
+  // Token can live in either slot: the IMAGE-mode token box or Providers → huggingface.
+  const hfGpuToken = () => hfToken || (S.providers && S.providers.huggingface) || '';
   const loadHfGpu = (silent) => {
-    if (!hfToken) { setHfGpuConnected(false); return; }
-    fetch(HF_ROUTER + '/models', { headers: { Authorization: 'Bearer ' + hfToken } })
+    const tok = hfGpuToken();
+    if (!tok) { setHfGpuConnected(false); setHfGpuErr('needs HF token — Providers → huggingface, or the IMAGE-mode token box'); return; }
+    fetch(HF_ROUTER + '/models', { headers: { Authorization: 'Bearer ' + tok } })
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then(j => { setHfGpuModels((j.data || []).map(m => m.id).filter(Boolean)); setHfGpuConnected(true); })
-      .catch(() => { setHfGpuConnected(false); if (!silent) setVoiceErr('HF GPU unreachable — check your HF token (Settings or the token box in image mode)'); });
+      .then(j => { setHfGpuModels((j.data || []).map(m => m.id).filter(Boolean)); setHfGpuConnected(true); setHfGpuErr(''); })
+      .catch(e => { setHfGpuConnected(false); setHfGpuErr(e.message); if (!silent) setVoiceErr('HF GPU unreachable: ' + e.message); });
   };
-  useEffect(() => { if (S.hfGpuOn) { loadHfGpu(true); const t = setInterval(() => loadHfGpu(true), 60000); return () => clearInterval(t); } }, [S.hfGpuOn, hfToken]);
+  useEffect(() => { if (S.hfGpuOn) { loadHfGpu(true); const t = setInterval(() => loadHfGpu(true), 60000); return () => clearInterval(t); } }, [S.hfGpuOn, hfToken, S.providers]);
   useEffect(() => {
     if (!S.hfGpuOn) return;
     const t = setInterval(() => setHfGpuTimer(m => {
@@ -2400,8 +2404,9 @@ function App() {
         if (!S.nvidiaEnterpriseKey) throw new Error('NVIDIA Enterprise API key not set. Open Settings → NVIDIA Enterprise API key');
         headers = { Authorization: 'Bearer ' + S.nvidiaEnterpriseKey };
       } else if (onHfGpu) {
-        if (!hfToken) throw new Error('HF token needed to power the HF GPU — paste it into the HF token box (switch to IMAGE mode) or Settings');
-        headers = { Authorization: 'Bearer ' + hfToken };
+        const tok = hfGpuToken();
+        if (!tok) throw new Error('HF token needed to power the HF GPU — put it in Providers → huggingface or the IMAGE-mode token box');
+        headers = { Authorization: 'Bearer ' + tok };
       } else if (nvidia) {
         if (!S.nvidiaKey) throw new Error('NVIDIA API key not set');
         headers = { Authorization: 'Bearer ' + S.nvidiaKey };
@@ -2618,11 +2623,11 @@ function App() {
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={S.hfGpuOn ? '#34d399' : 'currentColor'} strokeWidth="2.4" strokeLinecap="round"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>
                       HF GPU {S.hfGpuOn ? 'ON' : 'OFF'}
                     </span>
-                    <span className="mtag" style={{color: S.hfGpuOn ? (hfGpuConnected ? '#34d399' : '#eeca50') : '#71717a'}}>
-                      {S.hfGpuOn ? (hfGpuConnected ? 'POWERED BY HF · ' + hfGpuModels.length + ' models' : 'connecting…') : 'click to power on'}
+                    <span className="mtag" style={{color: S.hfGpuOn ? (hfGpuConnected ? '#34d399' : hfGpuErr ? '#fca5a5' : '#eeca50') : '#71717a'}}>
+                      {!S.hfGpuOn ? 'click to power on' : hfGpuConnected ? 'POWERED BY HF · ' + hfGpuModels.length + ' models' : hfGpuErr || 'connecting…'}
                     </span>
                   </div>
-                  {S.hfGpuOn && (hfGpuModels.length ? hfGpuModels.map(id => <ModelRow key={id} id={id} label={short(id)} tag="HF" tagColor="#eab308" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>{hfToken ? 'loading the catalog…' : 'paste your HF token (IMAGE mode token box) to power on'}</div>)}
+                  {S.hfGpuOn && (hfGpuModels.length ? hfGpuModels.map(id => <ModelRow key={id} id={id} label={short(id)} tag="HF" tagColor="#eab308" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>{hfGpuErr || 'loading the catalog…'}</div>)}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>OPENCODE · FREE VIA OPENROUTER</div>
                   {opencodeModels === null ? (
