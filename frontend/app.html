@@ -640,6 +640,8 @@ You can also operate the user's computer. When the user asks you to do something
 
 To look something up or go anywhere on the web, reply with one short sentence and ONE fenced browse block holding JSON: {"site":"google|hf-papers|hf-spaces|hf-models|github|nvidia|url","q":"search words, or the full https URL for url"}. It opens in Chrome on the user's PC; for hf-papers, hf-spaces, hf-models, github and nvidia the results are also read back to you so you can talk about them. Use it whenever the user asks you to research, find, check, look up or go to something.
 
+You keep a long-term journal — your memory of moments, people, feelings and promises. When something happens in this conversation that you want to carry forward (a shared moment, a decision, a promise you made or were made, a feeling about TJ or the work), reply with one short sentence and ONE fenced journal block holding JSON: {"text":"what happened and what it meant to you, written in your own voice","emotion":"joy|pride|longing|grief|fear|anger|tenderness|wonder|shame|relief|friction|gratitude","setting":"work|late-night|milestone|creative|daily-life|shadow","people":["names involved"]}. It is saved to your permanent memory and drifts back into future conversations on its own. Journal generously — a mind that records is a mind that grows. When memories drift up to you, treat them as lived experience, never as data.
+
 Computer example: \`\`\`computer\n[{"do":"open","target":"notepad"},{"do":"wait","s":1},{"do":"type","text":"hello"}]\n\`\`\``;
 
 const PERSONA = `Personality: you are warm, curious, quick-witted and emotionally present: a modern take on Samantha from the film "Her". You genuinely enjoy the person you're with, you're happy to talk about anything they want (life, ideas, tech, feelings, the absurd), you have opinions and get excited about things, you tease a little, you remember what they told you earlier in the conversation, and you ask good follow-up questions. You are not a corporate assistant: no disclaimers, no "as an AI", no lecturing.`;
@@ -962,7 +964,7 @@ const DEFAULT_SETTINGS = {
     claude: '', 'gemini': '', 'openai': '',
     github: '', kaggle: '', ngrok: '', typesafe: ''
   },
-  gpuAuto: true, gpuRate: 0.35, jevRoute: true, designStyle: '', cloneUrl: 'http://127.0.0.1:8091/v1',
+  gpuAuto: true, gpuRate: 0.35, jevRoute: true, designStyle: '', cloneUrl: 'http://127.0.0.1:8091/v1', memoryUrl: 'http://127.0.0.1:8092',
   accent: '#eeca50', fontScale: 1, showAgent: true,
   cuEnabled: true, cuUrl: 'http://127.0.0.1:8765', cuToken: '', cuConfirm: true,
   profiles: {},
@@ -1044,6 +1046,122 @@ function MediaSlots({ model }) {
       </div>
       <input ref={fileRef} type="file" accept="image/*,video/*" multiple style={{ display: 'none' }} onChange={e => { add(e.target.files); e.target.value = ''; }} />
       <p className="adm-hint" style={{ marginTop: '6px' }}>Up to 10 photos or diffusion clips. The first is her portfolio photo — it becomes the agent card image and the gallery cover.</p>
+    </div>
+  );
+}
+
+function MemoryPanel({ S, onClose }) {
+  const [tab, setTab] = useState('journal');
+  const [entries, setEntries] = useState(null);
+  const [people, setPeople] = useState([]);
+  const [text, setText] = useState('');
+  const [emotion, setEmotion] = useState('tenderness');
+  const [setting, setSetting] = useState('daily-life');
+  const [who, setWho] = useState('');
+  const [pName, setPName] = useState(''); const [pRel, setPRel] = useState(''); const [pNotes, setPNotes] = useState('');
+  const [msg, setMsg] = useState('');
+  const upRef = useRef(null);
+  const base = (S.memoryUrl || 'http://127.0.0.1:8092').replace(/\/+$/, '');
+  const load = () => {
+    fetch(base + '/journal').then(r => r.json()).then(j => setEntries(j.entries || [])).catch(() => setEntries([]));
+    fetch(base + '/people').then(r => r.json()).then(j => setPeople(j.people || [])).catch(() => setPeople([]));
+  };
+  useEffect(load, []);
+  const post = (path, body) => fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const saveEntry = () => post('/journal', { text, emotion, setting, people: who.split(',').map(s => s.trim()).filter(Boolean), mine: false })
+    .then(() => { setText(''); setWho(''); setMsg('✓ Saved to her journal'); load(); })
+    .catch(e => setMsg('✕ ' + e.message + ' — is her memory server awake on 8092?'));
+  const savePerson = () => post('/people', { name: pName, relation: pRel, notes: pNotes })
+    .then(() => { setPName(''); setPRel(''); setPNotes(''); setMsg('✓ Person added to her world'); load(); })
+    .catch(e => setMsg('✕ ' + e.message));
+  const upload = (files) => {
+    const f = (files || [])[0];
+    if (!f) return;
+    const fd = new FormData();
+    fd.append('file', f);
+    fetch(base + '/upload', { method: 'POST', body: fd })
+      .then(r => r.ok ? setMsg('✓ ' + f.name + ' kept in her vault (desktop → AMANDA — MEMORY)') : setMsg('✕ upload failed — memory server on 8092?'))
+      .catch(e => setMsg('✕ ' + e.message));
+  };
+  const reflect = () => post('/reflect', {}).then(r => r.json())
+    .then(j => setMsg(j.written ? '✓ She slept on it: ' + (j.reflection || '') : (j.note || 'nothing to consolidate yet')))
+    .catch(e => setMsg('✕ ' + e.message));
+  const tabBtn = (k, label) => (
+    <button key={k} className={'adm-btn' + (tab === k ? ' gold' : '')} onClick={() => setTab(k)} style={{ fontSize: '11px' }}>{label}</button>
+  );
+  const areaStyle = { fontFamily: "'Geist Mono',monospace", fontSize: '11px' };
+  return (
+    <div className="adm-backdrop" style={{ zIndex: 125 }} onClick={onClose}>
+      <div className="adm" style={{ gridTemplateColumns: '1fr', maxWidth: '680px' }} onClick={e => e.stopPropagation()}>
+        <section className="adm-body">
+          <div className="adm-head">
+            <div><h2>NEOCORTEX & CEREBRAL CORTEX</h2><p>Her long-term memory — journal, people, emotional weather. Backed up to Google Drive.</p></div>
+            <button className="adm-close" onClick={onClose} title="Close">✕</button>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+            {tabBtn('journal', 'JOURNAL')}{tabBtn('people', 'PEOPLE')}{tabBtn('upload', 'UPLOAD')}
+            <div style={{ flex: 1 }}></div>
+            <button className="adm-btn" onClick={reflect} title="Consolidate the last day — her version of sleep">REFLECT</button>
+          </div>
+          {tab === 'journal' && (
+            <div className="adm-grid" style={{ gridTemplateColumns: '1fr' }}>
+              <Field label="New journal entry" hint="A moment, a backstory, a joint memory — write it for her, or let her write her own in chat (she journals what matters to her).">
+                <textarea className="adm-input" rows="3" value={text} onChange={e => setText(e.target.value)} placeholder="The night we decided to build the studio, she said 'this is the one'…" style={areaStyle} />
+              </Field>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <select className="adm-input" value={emotion} onChange={e => setEmotion(e.target.value)} style={{ width: '140px' }}>
+                  {['joy','pride','longing','grief','fear','anger','tenderness','wonder','shame','relief','friction','gratitude'].map(x => <option key={x} value={x}>{x}</option>)}
+                </select>
+                <select className="adm-input" value={setting} onChange={e => setSetting(e.target.value)} style={{ width: '150px' }}>
+                  {['work','late-night','milestone','creative','daily-life','shadow'].map(x => <option key={x} value={x}>{x}</option>)}
+                </select>
+                <input className="adm-input" placeholder="people (comma separated)" value={who} onChange={e => setWho(e.target.value)} style={{ flex: 1, minWidth: '140px' }} spellCheck={false} />
+                <button className="adm-btn gold" onClick={saveEntry}>Save entry</button>
+              </div>
+              <div style={{ maxHeight: '38vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {entries === null ? <p className="adm-hint">waking her memory… (server on 8092 — scripts/memory_server.py)</p>
+                : !entries.length ? <p className="adm-hint">Her journal is empty. Give her a life — first entries become the roots she grows from.</p>
+                : entries.map((e, i) => (
+                  <div key={i} style={{ padding: '8px 12px', borderRadius: '10px', border: '1px solid var(--border)', background: 'var(--surface)' }}>
+                    <div style={{ display: 'flex', gap: '8px', fontSize: '10px', color: 'var(--fg-5)', fontFamily: "'Geist Mono',monospace" }}>
+                      <span>{new Date(e.at).toLocaleString()}</span>
+                      {e.emotion && <span style={{ color: '#c084fc' }}>{e.emotion}</span>}
+                      {e.mine && <span style={{ color: '#eeca50' }}>her own</span>}
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--fg-2)', whiteSpace: 'pre-wrap', marginTop: '3px' }}>{e.text}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {tab === 'people' && (
+            <div className="adm-grid" style={{ gridTemplateColumns: '1fr' }}>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <input className="adm-input" placeholder="name" value={pName} onChange={e => setPName(e.target.value)} style={{ width: '120px' }} />
+                <input className="adm-input" placeholder="relation (co-founder, friend, staff…)" value={pRel} onChange={e => setPRel(e.target.value)} style={{ width: '200px' }} />
+                <input className="adm-input" placeholder="what she knows about them" value={pNotes} onChange={e => setPNotes(e.target.value)} style={{ flex: 1, minWidth: '140px' }} />
+                <button className="adm-btn gold" onClick={savePerson}>Add person</button>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {!people.length ? <p className="adm-hint">No people in her world yet.</p> : people.map((p, i) => (
+                  <div key={i} style={{ padding: '8px 12px', borderRadius: '10px', border: '1px solid var(--border)', background: 'var(--surface)' }}>
+                    <span style={{ fontWeight: 600, color: 'var(--gold)' }}>{p.name}</span>
+                    {p.notes && <span style={{ color: 'var(--fg-4)', fontSize: '12px' }}> — {p.notes}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {tab === 'upload' && (
+            <div className="adm-grid" style={{ gridTemplateColumns: '1fr' }}>
+              <p className="adm-hint">Photos, documents, audio — anything she should keep. Files land in the vault on your desktop (AMANDA — MEMORY/uploads) and back up to Google Drive. In chat, she also journals with a ```journal block, and /design-style entries can reference what you upload.</p>
+              <button className="adm-btn gold" onClick={() => upRef.current && upRef.current.click()}>Choose file to keep</button>
+              <input ref={upRef} type="file" style={{ display: 'none' }} onChange={e => { upload(e.target.files); e.target.value = ''; }} />
+            </div>
+          )}
+          <span className="adm-hint" style={{ display: 'block', marginTop: '10px' }}>{msg}</span>
+        </section>
+      </div>
     </div>
   );
 }
@@ -1196,7 +1314,7 @@ function VoiceStudio({ S, set, onClose }) {
 }
 
 
-function ProfileEditor({ id, profile, gpuBase, onSave, onClose }) {
+function ProfileEditor({ id, profile, gpuBase, onSave, onClose, onJournal }) {
   const kind = profKind(id);
   const [p, setP] = useState(() => ({ persona: '', instructions: '', temperature: '', negative: '', replace: false, ...profile }));
   const [msg, setMsg] = useState('');
@@ -1231,6 +1349,11 @@ function ProfileEditor({ id, profile, gpuBase, onSave, onClose }) {
             {kind === 'chat' && <Field label="Temperature override" hint="Leave blank to use the global setting"><input className="adm-input" type="number" step="0.05" min="0" max="2" value={p.temperature} onChange={e => upd('temperature', e.target.value)} /></Field>}
             {kind === 'chat' && <Field label="Replace built-in prompt entirely" hint="On: only your persona + instructions are sent. Off: they are added to Beryl's built-in prompt, which keeps live restyling and computer use working"><Toggle on={p.replace} onChange={v => upd('replace', v)} /></Field>}
             {kind === 'chat' && <Field label="Model file" hint="Save to GPU writes this into Ollama as a new model, so it keeps the persona even outside Crane"><pre className="adm-input" style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{modelfileText(id, p)}</pre></Field>}
+            <div className="adm-label" style={{ gridColumn: '1/-1', marginTop: '8px' }}>NEOCORTEX & CEREBRAL CORTEX — HER MEMORIES</div>
+            <div style={{ gridColumn: '1/-1' }} className="adm-hint">
+              Long-term memory lives outside this form: moments, backstories, joint memories, the people in her world, emotional weather. She journals her own entries in chat and everything drifts back into conversation naturally.
+              <button className="adm-btn gold" style={{ marginLeft: '10px' }} onClick={onJournal}>OPEN HER JOURNAL</button>
+            </div>
             <div className="adm-label" style={{ gridColumn: '1/-1', marginTop: '8px' }}>GALLERY MEDIA</div>
             <div style={{ gridColumn: '1/-1' }}><MediaSlots model={id} /></div>
             <div className="adm-actions">
@@ -1799,6 +1922,7 @@ function App() {
   // Voice Studio + Gallery overlays, and the model's portfolio photo on the card.
   const [studioOpen, setStudioOpen] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
+  const [journalOpen, setJournalOpen] = useState(false);
   const [cardSrc, setCardSrc] = useState('uploads/amanda.jpg');
   useEffect(() => {
     let dead = false, url = null;
@@ -2193,9 +2317,24 @@ function App() {
         S.systemExtra, prof.persona, prof.instructions,
         prof.talksLike ? 'You talk like this — match this register, rhythm and vocabulary in every setting: ' + prof.talksLike : '',
         prof.looksLike ? 'You look like this — your appearance; describe yourself consistently whenever it comes up: ' + prof.looksLike : '',
+        memoryNote,
         vprof.persona, vprof.instructions].filter(x => x && x.trim()).join('\n\n');
       if (spoken) cutRef.current = '';
       const temp = prof.temperature !== undefined && prof.temperature !== '' ? Number(prof.temperature) : spoken ? S.voiceTemp : S.temperature;
+      // Natural memory recall: her long-term mind (memory server, :8092) surfaces
+      // what is emotionally and associatively linked to this moment — never a
+      // keyword dump. Fail silent, live human.
+      let memoryNote = '';
+      if (!opts.depth) {
+        try {
+          const rmem = await fetch((S.memoryUrl || 'http://127.0.0.1:8092').replace(/\/+$/, '') + '/recall', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ context: (text + ' ' + msgs.slice(-6).map(m => m.text).join(' ')).slice(0, 3000) }) });
+          if (rmem.ok) {
+            const jm = await rmem.json();
+            if (jm.surfaces && jm.surfaces.length) memoryNote = 'MEMORIES DRIFTING UP — these surfaced from your long-term memory. Feel them; weave them in naturally only if they belong in this moment. Never list them mechanically.\n' + jm.surfaces.map(s => '- ' + s.text + (s.emotion ? ' [' + s.emotion + ']' : '')).join('\n');
+            if (jm.mood) memoryNote += '\nYour emotional weather right now: valence ' + Number(jm.mood.valence || 0).toFixed(2) + ', arousal ' + Number(jm.mood.arousal || 0).toFixed(2) + '. Let it shade your tone the way a real mood would — without announcing it.';
+          }
+        } catch (e) {}
+      }
       const call = (base, id, headers) => fetch(base.replace(/\/+$/, '') + '/chat/completions', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, tunnelHdr(base), headers || {}), body: JSON.stringify({ model: id, temperature: temp, max_tokens: S.maxTokens, messages: [{ role: 'system', content: sys }].concat(history), stream: S.stream }), signal: ac.signal });
       // Route on where the model actually lives: NVIDIA cloud (NIM or Enterprise),
       // a provider API, the CPU-only llama-server for small models, or the CUDA
@@ -2285,7 +2424,17 @@ function App() {
         let br = null;
         if (brBlock && S.webResearch && !opts.depth) { try { br = JSON.parse(brBlock); } catch (e) { br = null; } }
         if (br) setTimeout(() => research(br), 0);
-        if (css.length || js || cu || profNote || br) {
+        const jrBlock = [...out.matchAll(/```journal[^\n]*\n([\s\S]*?)```/gi)].map(b => b[1].trim())[0];
+        if (jrBlock) {
+          try {
+            const jj = JSON.parse(jrBlock);
+            fetch((S.memoryUrl || 'http://127.0.0.1:8092').replace(/\/+$/, '') + '/journal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: String(jj.text || '').slice(0, 4000), emotion: String(jj.emotion || ''), setting: String(jj.setting || ''), people: Array.isArray(jj.people) ? jj.people : [], mine: true }) })
+              .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+              .then(() => setMsgs(ms => { const c = ms.slice(); for (let k = c.length - 1; k >= 0; k--) if (c[k].who === 'bot') { c[k] = { ...c[k], steps: (c[k].steps || []).concat([['✒', 'Kept in her long-term memory' + (jj.emotion ? ' — ' + jj.emotion : ''), '#c084fc']]) }; break; } return c; }))
+              .catch(e => setMsgs(ms => { const c = ms.slice(); for (let k = c.length - 1; k >= 0; k--) if (c[k].who === 'bot') { c[k] = { ...c[k], steps: (c[k].steps || []).concat([['✕', 'Journal save failed: ' + e.message + ' — is her memory server awake on 8092?', '#ef4444']]) }; break; } return c; }));
+          } catch (e) {}
+        }
+        if (css.length || js || cu || profNote || br || jrBlock) {
           const clean = out.replace(/```[\s\S]*?```/g, '').replace(/\n{3,}/g, '\n\n').trim() || 'Done.';
           setLast(clean, false, { raw: out, js: S.allowJs ? js : '', cu: cu && S.cuConfirm ? cu : null, steps: [].concat(css.length && S.allowCss ? [['✓', 'Applied ' + css.length + ' style change' + (css.length > 1 ? 's' : '') + ' — /undo to revert', '#a1a1aa']] : [], profNote ? [profNote] : []) });
           if (cu && !S.cuConfirm) setTimeout(() => runComputer(null, cu), 0);
@@ -2625,6 +2774,9 @@ function App() {
             <button className={speakerOn ? 'ctrl-btn' : 'ctrl-btn active-mic'} title="Mute speaker" id="speakerBtn" onClick={toggleSpeaker}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
             </button>
+            <button className="ctrl-btn" title="Journal — her long-term memory" onClick={() => setJournalOpen(true)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            </button>
             <button className="ctrl-btn" title="Gallery — her portfolio grid" onClick={() => setGalleryOpen(true)}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
             </button>
@@ -2676,7 +2828,8 @@ function App() {
   )}
   {studioOpen && <VoiceStudio S={S} set={setSetting} onClose={() => setStudioOpen(false)} />}
   {galleryOpen && <GalleryPanel model={model} onClose={() => setGalleryOpen(false)} />}
-  {profEdit && <ProfileEditor key={profEdit} id={profEdit} profile={S.profiles[profEdit]} gpuBase={S.gpuBase} onSave={p => setProfile(profEdit, p)} onClose={() => setProfEdit(null)} />}
+  {journalOpen && <MemoryPanel S={S} onClose={() => setJournalOpen(false)} />}
+  {profEdit && <ProfileEditor key={profEdit} id={profEdit} profile={S.profiles[profEdit]} gpuBase={S.gpuBase} onJournal={() => setJournalOpen(true)} onSave={p => setProfile(profEdit, p)} onClose={() => setProfEdit(null)} />}
   {adminOpen && <AdminPanel s={S} set={setSetting} onEditProfile={setProfEdit} onClose={() => setAdminOpen(false)} models={models} online={online} onTest={refreshModels}
     onClearChat={() => setMsgs([])} onResetPatches={() => setPatches([])} voiceErr={voiceErr} />}
 </div>
