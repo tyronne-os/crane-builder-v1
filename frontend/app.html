@@ -863,6 +863,7 @@ const modelMode = (id) => isVideoModel(id) ? 'video' : isImageModel(id) ? 'image
 
 const HF_DIFFUSION_MODELS = [
   { id: 'Qwen/Qwen-Image-2.1-Uncensored', label: 'Qwen-Image-2.1-Uncensored', tag: 'HF · image' },
+  { id: 'black-forest-labs/FLUX.1-schnell', label: 'FLUX.1-schnell',            tag: 'HF · image' },
   { id: 'Lightricks/LTX-2.5',             label: 'LTX-2.5',                   tag: 'HF · video' },
 ];
 
@@ -897,14 +898,16 @@ const DEFAULT_SETTINGS = {
   projectName: 'crane-it', defaultTab: 'preview', showStatus: true, shipTarget: 'hf',
   gpuBase: CFG.base, defaultModel: '', temperature: 0.4, maxTokens: 2048, stream: true, systemExtra: '', allowCss: true, allowJs: true,
   defaultMode: 'builder', autoSwitch: true, imgApi: 'https://api-inference.huggingface.co/models/Qwen/Qwen-Image-2.1', vidApi: 'https://api-inference.huggingface.co/models/Lightricks/LTX-2.5', clipSeconds: 8, autoStitch: true,
-  agentName: 'Amanda', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'qwen3tts', voice: 'amanda', voiceSpeed: 1.0, ttsUrl: 'http://127.0.0.1:11437/v1', ttsGpuUrl: 'http://127.0.0.1:11437/v1', autoSpeak: true, micMode: 'toggle',
+  agentName: 'Amanda', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'kokoro', voice: 'sarah', voiceSpeed: 1.0, ttsUrl: 'http://127.0.0.1:8090/v1', ttsGpuUrl: 'http://127.0.0.1:8090/v1', autoSpeak: true, micMode: 'toggle', sttSource: 'browser',
   userName: '', vernacular: '', liveGreet: true, bargeIn: true, avatarOn: true, webResearch: true, listenLang: 'English', berylUrl: 'http://127.0.0.1:8882/v1', voiceTemp: 0.8, voiceV: 2, voiceFx: {},
   nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU',
   registryUrl: 'http://localhost:11436/v1', cpuBase: 'http://localhost:11438/v1', nvidiaModels: ['zai-org/glm-4.5-air', 'zai-org/glm-4.5'], nvidiaKey: '', nvidiaEnterpriseKey: '', nvidiaEnterpriseModels: [],
   providers: { 
     anthropic: '', 'openrouter': '', 'huggingface': '', 'google': '', 'meta-muse': '',
-    claude: '', 'gemini': '', 'openai': ''
+    claude: '', 'gemini': '', 'openai': '',
+    github: '', kaggle: '', ngrok: ''
   },
+  gpuAuto: true, gpuRate: 0.35,
   accent: '#eeca50', fontScale: 1, showAgent: true,
   cuEnabled: true, cuUrl: 'http://127.0.0.1:8765', cuToken: '', cuConfirm: true,
   profiles: {},
@@ -982,7 +985,22 @@ function ProfileEditor({ id, profile, gpuBase, onSave, onClose }) {
   try { const o = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); o.cuToken = m[1]; localStorage.setItem(SETTINGS_KEY, JSON.stringify(o)); } catch (e) {}
   history.replaceState(null, '', location.pathname + location.search);
 })();
-const loadSettings = () => { try { const o = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); if (!o.gpuBase && o.apiBase) o.gpuBase = o.apiBase; delete o.apiBase; const r = { ...DEFAULT_SETTINGS, ...o }; if ((o.voiceV || 1) < 2) { r.voiceEngine = 'qwen3tts'; r.voice = 'beryl'; r.voiceV = 2; } delete r.sttLang; if (!VOICE_ENGINES[r.voiceEngine]) { r.voiceEngine = DEFAULT_SETTINGS.voiceEngine; r.voice = DEFAULT_SETTINGS.voice; } return r; } catch (e) { return { ...DEFAULT_SETTINGS }; } };
+const loadSettings = () => { try { const o = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); if (!o.gpuBase && o.apiBase) o.gpuBase = o.apiBase; delete o.apiBase; const r = { ...DEFAULT_SETTINGS, ...o }; r.providers = Object.assign({}, DEFAULT_SETTINGS.providers, o.providers || {}); if ((o.voiceV || 1) < 3) { r.voiceEngine = 'kokoro'; r.voice = 'sarah'; r.ttsUrl = DEFAULT_SETTINGS.ttsUrl; r.ttsGpuUrl = DEFAULT_SETTINGS.ttsGpuUrl; r.sttSource = 'browser'; r.voiceV = 3; } delete r.sttLang; if (!VOICE_ENGINES[r.voiceEngine]) { r.voiceEngine = DEFAULT_SETTINGS.voiceEngine; r.voice = DEFAULT_SETTINGS.voice; } return r; } catch (e) { return { ...DEFAULT_SETTINGS }; } };
+
+// ── spy-free update check ──────────────────────────────────────────────────
+// The page never phones home to anyone. The ONLY update signal is a same-origin
+// fetch of ./version.json compared against the build stamp embedded below at
+// deploy time. No analytics, no beacons, no cookies, no third-party calls.
+const BUILD = '__BUILD__';
+const loadVersionCheck = (onUpdate) => {
+  if (BUILD === '__BUILD__') return;          // local dev copy — nothing to compare
+  const check = () => fetch('./version.json', { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : null)
+    .then(j => { if (j && j.sha && j.sha !== BUILD) onUpdate(j.sha); })
+    .catch(() => {});
+  check();
+  setInterval(check, 180000);                  // every 3 minutes
+};
 
 const ADMIN_SECTIONS = [
   ['workspace', 'Workspace', 'Header, project & shipping'],
@@ -1376,6 +1394,7 @@ function App() {
   const [dictating, setDictating] = useState(false);
   const fileRef = useRef(null);
   const dictRef = useRef(null);
+  const liveSTTRef = useRef(null);
   const readImageFiles = (files) => {
     const imgs = [...(files || [])].filter(f => f.type && f.type.startsWith('image/'));
     if (!imgs.length) return;
@@ -1405,6 +1424,27 @@ function App() {
     dictRef.current = r;
     try { r.start(); setDictating(true); setVoiceErr(''); } catch (e) { dictRef.current = null; }
   };
+  // Dyad-style live preview: the latest html/css/js fences Amanda writes become the
+  // page shown in the centre pane — the first code line shows up live. The iframe is
+  // sandboxed without allow-same-origin, so preview code cannot read this app, your
+  // session or your cookies. It renders, and that is all it can do.
+  const previewDoc = (() => {
+    let html = '', css = '', js = '';
+    msgs.forEach(m => {
+      if (m.who !== 'bot' || !m.text) return;
+      const fences = m.text.match(/```[a-z]*\n[\s\S]*?```/gi) || [];
+      fences.forEach(f => {
+        const mm = f.match(/```([a-z]*)\n([\s\S]*?)```/i);
+        if (!mm) return;
+        const kind = (mm[1] || '').toLowerCase(), code = mm[2] || '';
+        if (kind === 'css') css = code;
+        else if (kind === 'js' || kind === 'javascript') js = code;
+        else if (kind === 'html' || kind === '') html = code;
+      });
+    });
+    if (!html && !css && !js) return '';
+    return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:system-ui,sans-serif;margin:16px;color:#111}' + css + '</style></head><body>' + html + '<scr' + 'ipt>' + js + '<\/scr' + 'ipt></body></html>';
+  })();
   const feedRef = useRef(null);
   const [model, setModel] = useState(CFG.model);
   const [models, setModels] = useState([]);
@@ -1434,6 +1474,26 @@ function App() {
   const nvidiaAll = [], nvidiaSeen = {};
   nvidiaList.concat(nvidiaCatalogList).forEach(n => { if (!nvidiaSeen[n.id]) { nvidiaSeen[n.id] = 1; nvidiaAll.push(n); } });
   const cpuOthers = cpuModels.filter(id => id !== DEFAULT_LOCAL_MODEL);
+  // OPENCODE · the free OpenRouter catalog, from the public models.dev registry —
+  // the same one the OpenCode editor reads. Filtered to :free chat models, fetched
+  // once per session when the menu opens. Routed via your OpenRouter key.
+  const [opencodeModels, setOpencodeModels] = useState(null);
+  const loadOpencode = () => {
+    if (opencodeModels) return;
+    fetch('https://models.dev/api.json').then(r => r.json()).then(d => {
+      const orv = (d && d.openrouter && d.openrouter.models) || {};
+      const list = [];
+      Object.keys(orv).forEach(mid => {
+        if (!mid.endsWith(':free') || /lyria|clip/i.test(mid)) return;
+        list.push({ id: 'opencode/' + mid, label: orv[mid].name || mid });
+      });
+      setOpencodeModels(list);
+    }).catch(() => setOpencodeModels([]));
+  };
+  // GPU session meter — pure bookkeeping in this browser: seconds clocked while the
+  // GPU is engaged, priced to the penny at S.gpuRate per hour. Nothing leaves the page.
+  const [gpuMeter, setGpuMeter] = useState(() => { try { return JSON.parse(localStorage.getItem('crane.gpuMeter') || '{"on":false,"seconds":0,"cents":0}'); } catch (e) { return { on: false, seconds: 0, cents: 0 }; } });
+  const [updateReady, setUpdateReady] = useState('');
   const [refImg, setRefImg] = useState(null);
   const refFileRef = useRef(null);
   const vidClips = useRef([]);
@@ -1509,6 +1569,24 @@ function App() {
       .then(j => setNvidiaCatalog((j.data || []).map(m => m.id).filter(Boolean)))
       .catch(() => setNvidiaCatalog([]));
   }, [S.nvidiaKey]);
+  // GPU meter: a cent-accurate clock while a GPU session is engaged. Auto-join
+  // when a diffusion model puts the centre pane in movie-screen mode; auto-leave
+  // when you pick a chat model. Click the pill to override manually.
+  useEffect(() => {
+    if (!gpuMeter.on) return;
+    const t = setInterval(() => setGpuMeter(m => {
+      const n = { on: true, seconds: m.seconds + 1, cents: m.cents + (S.gpuRate || 0.35) * 100 / 3600 };
+      try { localStorage.setItem('crane.gpuMeter', JSON.stringify(n)); } catch (e) {}
+      return n;
+    }), 1000);
+    return () => clearInterval(t);
+  }, [gpuMeter.on, S.gpuRate]);
+  useEffect(() => {
+    if (!S.gpuAuto) return;
+    const want = centerMode === 'image' || centerMode === 'video';
+    setGpuMeter(m => (m.on === want ? m : { ...m, on: want }));
+  }, [centerMode, S.gpuAuto]);
+  useEffect(() => { loadVersionCheck(sha => setUpdateReady(sha)); }, []);
   useEffect(() => { const r = document.documentElement.style; r.setProperty('--gold', S.accent); }, [S.accent]);
   useEffect(() => { if (S.autoSwitch) setCenterMode(m => m === 'builder' || modelMode(model) !== 'builder' ? modelMode(model) : m); }, [model]);
 
@@ -1594,6 +1672,7 @@ function App() {
   };
   const stopLive = () => {
     liveRef.current = false;
+    if (liveSTTRef.current) { try { liveSTTRef.current.onend = null; liveSTTRef.current.stop(); } catch (e) {} liveSTTRef.current = null; }
     MicLink.stop();
     VoiceOut.stop(); if (abortRef.current) abortRef.current.abort();
     setMicOn(false); setInterim(''); setVoiceState('idle');
@@ -1626,10 +1705,30 @@ function App() {
     };
     liveRef.current = true; setMicOn(true); setVoiceErr(''); setVoiceState('listening');
     greet();
-    MicLink.start(sref.current.berylUrl, sref.current.listenLang, { onText, onEvent, onStatus: setVoiceErr }).catch(e => {
-      setVoiceErr(e.name === 'NotAllowedError' ? 'Microphone blocked: allow it in the address bar' : 'Microphone unavailable: ' + e.message);
-      stopLive();
-    });
+    // Two live-listen paths: 'browser' uses Chrome's built-in recognition (works
+    // anywhere, zero infra); 'server' uses the Qwen3-ASR whisper websocket.
+    if (sref.current.sttSource === 'browser') {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) { setVoiceErr('Live browser dictation needs Chrome or Edge'); stopLive(); return; }
+      const r = new SR();
+      r.continuous = true; r.interimResults = true; r.lang = DICT_LANGS[S.listenLang] || 'en-US';
+      r.onresult = (e) => {
+        let finals = '', interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) finals += t; else interim += t;
+        }
+        if (finals) onText(finals, true); else if (interim) setInterim(interim);
+      };
+      r.onerror = (e) => { if (e.error === 'not-allowed' || e.error === 'audio-capture') { setVoiceErr(e.error === 'not-allowed' ? 'Microphone blocked: allow it in the address bar' : 'No microphone found'); stopLive(); } };
+      r.onend = () => { if (liveRef.current) { try { r.start(); } catch (e2) {} } };
+      try { r.start(); liveSTTRef.current = r; } catch (e) { setVoiceErr('Could not start listening: ' + e.message); stopLive(); }
+    } else {
+      MicLink.start(sref.current.berylUrl, sref.current.listenLang, { onText, onEvent, onStatus: setVoiceErr }).catch(e => {
+        setVoiceErr(e.name === 'NotAllowedError' ? 'Microphone blocked: allow it in the address bar' : 'Microphone unavailable: ' + e.message);
+        stopLive();
+      });
+    }
   };
   const toggleMic = () => { if (liveRef.current) stopLive(); else startLive(); };
   const toggleSpeaker = () => { const on = !speakerOn; setSpeakerOn(on); if (!on) VoiceOut.stop(); };
@@ -1726,6 +1825,7 @@ function App() {
       const providerBases = {
         anthropic: 'https://api.anthropic.com/v1',
         openrouter: 'https://openrouter.ai/api/v1',
+        opencode: 'https://openrouter.ai/api/v1',
         huggingface: 'https://api-inference.huggingface.co',
         google: 'https://generativelanguage.googleapis.com',
         'meta-muse': 'https://api.muse.meta.com/v1',
@@ -1750,9 +1850,9 @@ function App() {
         const key = S.providers?.google || S.providers?.gemini || '';
         if (!key) throw new Error('Google API key not set');
         headers = { 'x-goog-api-key': key };
-      } else if (provider === 'openrouter') {
+      } else if (provider === 'openrouter' || provider === 'opencode') {
         const key = S.providers?.openrouter || '';
-        if (!key) throw new Error('OpenRouter key not set');
+        if (!key) throw new Error('OpenRouter key not set — click openrouter in Providers, or the OPENCODE row');
         headers = { Authorization: 'Bearer ' + key };
       } else if (provider === 'huggingface') {
         const key = S.providers?.huggingface || '';
@@ -1763,7 +1863,8 @@ function App() {
         if (!key) throw new Error('Meta Muse key not set');
         headers = { Authorization: 'Bearer ' + key };
       }
-      const res = await call(target, model, headers);
+      const wireId = model.startsWith('opencode/') ? model.slice('opencode/'.length) : model;
+      const res = await call(target, wireId, headers);
       if (!res.ok) throw new Error('HTTP ' + res.status);
       if (!S.stream) { const j = await res.json(); out = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || ''; setLast(out || '…'); if (chunker) chunker.push(out); }
       else {
@@ -1847,7 +1948,15 @@ function App() {
     </div>
     {S.showStatus && <div className="status-pill">
       <span className="status-dot" style={online === true ? {} : { background: 'var(--fg-5)', animation: 'none' }}></span>
-      {short(model)} · {S.nodeName}
+      {model === DEFAULT_LOCAL_MODEL ? 'AMANDA' : short(model)} · {S.nodeName}
+    </div>}
+    {S.showStatus && <div className="status-pill" style={{cursor:'pointer'}} title={'GPU session meter — auto-on with diffusion models. Pure bookkeeping; nothing leaves this browser.'} onClick={() => setGpuMeter(m => ({ ...m, on: !m.on }))}>
+      <span className="status-dot" style={gpuMeter.on ? {} : { background: 'var(--fg-5)', animation: 'none' }}></span>
+      GPU {gpuMeter.on ? 'ON' : 'OFF'} · ${(gpuMeter.cents / 100).toFixed(4)}
+    </div>}
+    {updateReady && <div className="status-pill" style={{cursor:'pointer', borderColor:'rgba(238,202,80,.6)', color:'var(--gold)'}} title={'A new build is live — reload to pick it up. Same-origin check only; the page never phones home.'} onClick={() => location.reload()}>
+      <span className="status-dot" style={{ background: 'var(--gold)', animation: 'none' }}></span>
+      UPDATE READY · RELOAD
     </div>}
     <button className="btn-admin" title="Admin settings" onClick={() => setAdminOpen(true)}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -1904,7 +2013,7 @@ function App() {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
             </button>
             <div style={{ position: 'relative' }}>
-              <button className="model-chip" onClick={() => { if (!menuOpen) refreshModels(); setMenuOpen(o => !o); }}>{short(model)}
+              <button className="model-chip" onClick={() => { if (!menuOpen) { refreshModels(); loadOpencode(); } setMenuOpen(o => !o); }}>{model === DEFAULT_LOCAL_MODEL ? 'AMANDA' : short(model)}
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>
               </button>
               {menuOpen && (
@@ -1924,13 +2033,31 @@ function App() {
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>NVIDIA ENTERPRISE · DIGITAL HUMANS</div>
                   {(S.nvidiaEnterpriseModels || []).length ? (S.nvidiaEnterpriseModels || []).map(id => <ModelRow key={id} id={id} label={short(id)} tag="NVIDIA ENT" tagColor="#ff7a00" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>add model ids in Settings → NVIDIA Enterprise</div>}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
+                  <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>OPENCODE · FREE VIA OPENROUTER</div>
+                  {opencodeModels === null ? (
+                    <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>loading free models…</div>
+                  ) : opencodeModels.length ? opencodeModels.map(({id, label}) => (
+                    <ModelRow key={id} id={id} label={label} tag="FREE" tagColor="#22d3ee" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />
+                  )) : (
+                    <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>no free models came back — check your connection</div>
+                  )}
+                  <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>PROVIDERS · API KEYS</div>
                   {Object.entries(S.providers || {}).map(([k,v]) => (
-                    <div key={k} className="mrow" style={{cursor:'pointer'}} onClick={() => { const key = prompt('Enter API key for ' + k.toUpperCase()); if (key) setSetting('providers', {...S.providers, [k]: key.trim()}); }}>
+                    <div key={k} className="mrow" style={{cursor:'pointer'}} onClick={() => {
+                      if (k === 'claude') { window.open('https://claude.ai/login', '_blank', 'noopener'); return; }
+                      if (k === 'google') { window.open('https://accounts.google.com', '_blank', 'noopener'); return; }
+                      const key = prompt('Enter API key for ' + k.toUpperCase() + (k === 'github' ? ' (GITHUB_TOKEN)' : k === 'kaggle' ? ' (KAGGLE key from kaggle.json)' : k === 'ngrok' ? ' (NGROK_AUTHTOKEN)' : ''));
+                      if (key) setSetting('providers', {...S.providers, [k]: key.trim()});
+                    }}>
                       <span className="mname" style={{textTransform:'uppercase'}}>{k}</span>
-                      <span className="mtag" style={{color: v ? '#34d399' : '#71717a'}}>{v ? 'configured' : 'needs key'}</span>
+                      <span className="mtag" style={{color: (k === 'claude' || k === 'google') ? '#eeca50' : v ? '#34d399' : '#71717a'}}>{(k === 'claude' || k === 'google') ? 'subscription · login' : v ? 'configured' : 'needs key'}</span>
                     </div>
                   ))}
+                  <div key="opencode" className="mrow" style={{cursor:'pointer'}} onClick={() => { if (!S.providers.openrouter) { const key = prompt('OpenCode free models route via your OpenRouter key — paste it'); if (key) setSetting('providers', {...S.providers, openrouter: key.trim()}); } loadOpencode(); }}>
+                    <span className="mname" style={{textTransform:'uppercase'}}>opencode</span>
+                    <span className="mtag" style={{color: opencodeModels && opencodeModels.length ? '#22d3ee' : '#71717a'}}>{opencodeModels && opencodeModels.length ? opencodeModels.length + ' free models' : 'load free models'}</span>
+                  </div>
                   <div key="nvidia-nim" className="mrow" style={{cursor:'pointer'}} onClick={() => { const key = prompt('NVIDIA NIM key — NVIDIA_API_KEY from build.nvidia.com'); if (key) setSetting('nvidiaKey', key.trim()); }}>
                     <span className="mname" style={{textTransform:'uppercase'}}>nvidia nim</span>
                     <span className="mtag" style={{color: S.nvidiaKey ? '#34d399' : '#71717a'}}>{S.nvidiaKey ? 'configured' : 'needs key'}</span>
@@ -1941,7 +2068,7 @@ function App() {
                   </div>
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>DIFFUSION · HF API</div>
-                  {HF_DIFFUSION_MODELS.map(({id, label, tag}) => <ModelRow key={id} id={id} label={label} tag={tag.split(' · ')[1].toUpperCase()} tagColor={tag.includes('image') ? '#818cf8' : '#34d399'} active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />)}
+                  {HF_DIFFUSION_MODELS.map(({id, label, tag}) => <ModelRow key={id} id={id} label={label} tag={tag.split(' · ')[1].toUpperCase()} tagColor={tag.includes('image') ? '#818cf8' : '#34d399'} active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); setSetting(tag.includes('video') ? 'vidApi' : 'imgApi', 'https://api-inference.huggingface.co/models/' + id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />)}
                 </div>
               )}
             </div>
@@ -1980,6 +2107,9 @@ function App() {
       {centerMode === 'builder' && (
         <div className="preview-frame">
           {tab === 'preview' ? (
+            previewDoc ? (
+              <iframe title="Crane live preview" srcDoc={previewDoc} sandbox="allow-scripts allow-forms allow-modals allow-popups" style={{width:'100%',height:'100%',border:0,background:'#fff'}}></iframe>
+            ) : (
             <div className="idle-state" id="idlePane">
               <div className="idle-icon">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
@@ -1988,6 +2118,7 @@ function App() {
               <div className="idle-sub">Describe your project in the chat or tap the mic. The preview will appear here as Beryl builds it.</div>
               <div className="idle-pulse"></div>
             </div>
+            )
           ) : <CodePane />}
         </div>
       )}
@@ -2069,7 +2200,7 @@ function App() {
     {S.showAgent && <aside className="agent-sidebar">
 
       <div className="agent-card">
-        <img src="uploads/beryl.jpeg" alt="Beryl — Voice Agent" />
+        <img src="uploads/amanda.jpg" alt="Amanda — Voice Agent" />
         <AvatarCanvas />
         <AvatarStatus corner />
         <div className="agent-card-overlay"></div>
