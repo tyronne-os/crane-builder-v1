@@ -410,8 +410,8 @@ textarea::placeholder { color: var(--fg-5); }
   flex-direction: column;
   gap: 6px;
 }
-.voice-canvas-label { display: flex; align-items: center; justify-content: space-between; }
-.voice-state-text { font-family: 'Geist Mono', monospace; font-size: 10px; letter-spacing: .12em; color: var(--gold); }
+.voice-canvas-label { display: flex; align-items: center; justify-content: space-between; white-space: nowrap; min-height: 13px; overflow: hidden; }
+.voice-state-text { font-family: 'Geist Mono', monospace; font-size: 10px; letter-spacing: .12em; color: var(--gold); flex: 0 0 auto; }
 .voice-model-text { font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: .08em; color: rgba(255,255,255,.3); }
 #voiceCanvas { width: 100%; height: 44px; display: block; border-radius: 4px; }
 
@@ -432,6 +432,9 @@ textarea::placeholder { color: var(--fg-5); }
   font-size: 12px;
   line-height: 1.55;
   color: var(--fg-4);
+  height: 118px;
+  overflow-y: auto;
+  flex: 0 0 auto;
   min-height: 48px;
   text-wrap: pretty;
   font-style: italic;
@@ -2025,11 +2028,16 @@ function App() {
   const hfGpuToken = () => hfToken || (S.providers && S.providers.huggingface) || '';
   const loadHfGpu = (silent) => {
     const tok = hfGpuToken();
-    if (!tok) { setHfGpuConnected(false); setHfGpuErr('needs HF token — Providers → huggingface, or the IMAGE-mode token box'); return; }
+    if (!tok) { setHfGpuConnected(false); setHfGpuErr('needs HF token'); return; }
     fetch(HF_ROUTER + '/models', { headers: { Authorization: 'Bearer ' + tok } })
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { setHfGpuModels((j.data || []).map(m => m.id).filter(Boolean)); setHfGpuConnected(true); setHfGpuErr(''); })
       .catch(e => { setHfGpuConnected(false); setHfGpuErr(e.message); if (!silent) setVoiceErr('HF GPU unreachable: ' + e.message); });
+  };
+  // Click-and-paste — the same one-step key entry as every provider row.
+  const pasteHfToken = () => {
+    const k = prompt('Paste your HF access token — hf_… from huggingface.co/settings/tokens\nIt powers the HF GPU bay and diffusion.');
+    if (k) setSetting('providers', { ...(S.providers || {}), huggingface: k.trim() });
   };
   useEffect(() => { if (S.hfGpuOn) { loadHfGpu(true); const t = setInterval(() => loadHfGpu(true), 60000); return () => clearInterval(t); } }, [S.hfGpuOn, hfToken, S.providers]);
   useEffect(() => {
@@ -2533,9 +2541,9 @@ function App() {
       <span className="status-dot" style={gpuMeter.on ? {} : { background: 'var(--fg-5)', animation: 'none' }}></span>
       GPU {gpuMeter.on ? 'ON' : 'OFF'} · ${(gpuMeter.cents / 100).toFixed(4)}
     </div>}
-    {S.showStatus && S.hfGpuOn && <div className="status-pill" title={'HF GPU session — ' + hfGpuTimer.requests + ' requests sent, ' + hfGpuTimer.seconds + 's powered. Connectivity rechecked every minute; the dot stays green only when the router answers.'}>
+    {S.showStatus && S.hfGpuOn && <div className="status-pill" style={{cursor:'pointer'}} onClick={() => setSetting('hfGpuOn', false)} title={'HF GPU session — click to POWER OFF and stop the clock. ' + hfGpuTimer.requests + ' requests, ' + hfGpuTimer.seconds + 's powered.'}>
       <span className="status-dot" style={hfGpuConnected ? {} : { background: '#eeca50', animation: 'none' }}></span>
-      HF {hfGpuConnected ? 'CONNECTED' : 'CHECKING'} · {String(Math.floor(hfGpuTimer.seconds / 60)).padStart(2, '0')}:{String(hfGpuTimer.seconds % 60).padStart(2, '0')} · {hfGpuTimer.requests} req
+      HF {hfGpuConnected ? 'CONNECTED' : 'CHECKING'} · {String(Math.floor(hfGpuTimer.seconds / 60)).padStart(2, '0')}:{String(hfGpuTimer.seconds % 60).padStart(2, '0')} · {hfGpuTimer.requests} req · ✕ STOP
     </div>}
     {updateReady && <div className="status-pill" style={{cursor:'pointer', borderColor:'rgba(238,202,80,.6)', color:'var(--gold)'}} title={'A new build is live — reload to pick it up. Same-origin check only; the page never phones home.'} onClick={() => location.reload()}>
       <span className="status-dot" style={{ background: 'var(--gold)', animation: 'none' }}></span>
@@ -2618,7 +2626,7 @@ function App() {
                   {nvidiaEntAll.length ? nvidiaEntAll.map(id => <ModelRow key={id} id={id} label={short(id)} tag="NVIDIA ENT" tagColor="#ff7a00" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>{S.nvidiaEnterpriseKey ? 'enterprise catalog came back empty — paste ids in Settings' : 'enter your NVIDIA Enterprise key below — its catalog loads automatically'}</div>}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>HF GPU · FREE INFERENCE</div>
-                  <div className="mrow" style={{cursor:'pointer'}} onClick={() => setSetting('hfGpuOn', !S.hfGpuOn)} title="Power the HF Inference Providers GPU yourself">
+                  <div className="mrow" style={{cursor:'pointer'}} onClick={() => { if (S.hfGpuOn && !hfGpuToken()) pasteHfToken(); else setSetting('hfGpuOn', !S.hfGpuOn); }} title="Power the HF Inference Providers GPU yourself">
                     <span className="mname" style={{display:'flex',alignItems:'center',gap:'6px'}}>
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={S.hfGpuOn ? '#34d399' : 'currentColor'} strokeWidth="2.4" strokeLinecap="round"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>
                       HF GPU {S.hfGpuOn ? 'ON' : 'OFF'}
@@ -2627,7 +2635,7 @@ function App() {
                       {!S.hfGpuOn ? 'click to power on' : hfGpuConnected ? 'POWERED BY HF · ' + hfGpuModels.length + ' models' : hfGpuErr || 'connecting…'}
                     </span>
                   </div>
-                  {S.hfGpuOn && (hfGpuModels.length ? hfGpuModels.map(id => <ModelRow key={id} id={id} label={short(id)} tag="HF" tagColor="#eab308" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>{hfGpuErr || 'loading the catalog…'}</div>)}
+                  {S.hfGpuOn && (hfGpuModels.length ? hfGpuModels.map(id => <ModelRow key={id} id={id} label={short(id)} tag="HF" tagColor="#eab308" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:hfGpuErr && hfGpuErr.indexOf('token') >= 0 ? 'var(--gold)' : 'var(--fg-5)',fontFamily:"'Geist Mono',monospace",cursor:hfGpuErr && hfGpuErr.indexOf('token') >= 0 ? 'pointer' : 'default'}} onClick={() => { if (!hfGpuToken()) pasteHfToken(); }}>{hfGpuErr && hfGpuErr.indexOf('token') >= 0 ? '📋 click HERE to paste your HF token' : hfGpuErr || 'loading the catalog…'}</div>)}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>OPENCODE · FREE VIA OPENROUTER</div>
                   {opencodeModels === null ? (
