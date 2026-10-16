@@ -970,7 +970,7 @@ const DEFAULT_SETTINGS = {
     claude: '', 'gemini': '', 'openai': '',
     github: '', kaggle: '', ngrok: '', typesafe: ''
   },
-  gpuAuto: true, gpuRate: 0.35, jevRoute: true, designStyle: '', cloneUrl: 'http://127.0.0.1:8091/v1', memoryUrl: 'http://127.0.0.1:8092',
+  gpuAuto: true, gpuRate: 0.35, jevRoute: true, designStyle: '', cloneUrl: 'http://127.0.0.1:8091/v1', memoryUrl: 'http://127.0.0.1:8092', skills: {},
   accent: '#eeca50', fontScale: 1, showAgent: true,
   cuEnabled: true, cuUrl: 'http://127.0.0.1:8765', cuToken: '', cuConfirm: true,
   profiles: {},
@@ -1052,6 +1052,128 @@ function MediaSlots({ model }) {
       </div>
       <input ref={fileRef} type="file" accept="image/*,video/*" multiple style={{ display: 'none' }} onChange={e => { add(e.target.files); e.target.value = ''; }} />
       <p className="adm-hint" style={{ marginTop: '6px' }}>Up to 10 photos or diffusion clips. The first is her portfolio photo — it becomes the agent card image and the gallery cover.</p>
+    </div>
+  );
+}
+
+function SkillsPanel({ S, set, onClose }) {
+  const [repo, setRepo] = useState('');
+  const [pasteName, setPasteName] = useState('');
+  const [pasteMd, setPasteMd] = useState('');
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const upRef = useRef(null);
+  const skills = S.skills || {};
+  // Claude-compatible: reads SKILL.md frontmatter (name, description) and body,
+  // from .claude/skills/<name>/SKILL.md, skills/<name>/SKILL.md, plugin
+  // layouts, or a repo-root SKILL.md — the standard shapes Claude Code uses.
+  const importRepo = async () => {
+    const full = repo.replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '').replace(/\/+$/, '');
+    if (!/^[\w.-]+\/[\w.-]+$/.test(full)) { setMsg('paste owner/repo or a github URL'); return; }
+    setBusy(true); setMsg('reading ' + full + '…');
+    try {
+      const gh = (p) => fetch('https://api.github.com' + p, { headers: { Authorization: 'Bearer ' + (S.providers?.github || '') } }).then(r => r.ok ? r.json() : Promise.reject(new Error(r.status === 404 ? 'repo not found' : r.status === 401 ? 'token rejected' : 'HTTP ' + r.status)));
+      const info = await gh('/repos/' + full);
+      const branch = info.default_branch || 'main';
+      const tree = await gh('/repos/' + full + '/git/trees/' + branch + '?recursive=1');
+      const paths = (tree.tree || []).map(t => t.path).filter(p => /(^|\/)(\.claude\/)?skills?\/[^/]+\/SKILL\.md$/i.test(p) || /(^|\/)(\.claude-plugin\/)?skills?\/[^/]+\/SKILL\.md$/i.test(p) || /^SKILL\.md$/i.test(p));
+      if (!paths.length) throw new Error('no SKILL.md files found in that repo');
+      let loaded = 0;
+      for (const p of paths.slice(0, 12)) {
+        const md = await fetch('https://raw.githubusercontent.com/' + full + '/' + branch + '/' + p).then(r => r.text());
+        const fm = md.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+        let name = p.split('/').slice(-2, -1)[0] || full.split('/')[1];
+        let desc = '';
+        let body = md;
+        if (fm) {
+          body = fm[2];
+          const nm = fm[1].match(/^name:\s*(.+)$/m);
+          const dm = fm[1].match(/^description:\s*["']?(.+?)["']?\s*$/m);
+          if (nm) name = nm[1].trim();
+          if (dm) desc = dm[1].trim();
+        }
+        set('skills', { ...skills, [name]: { desc, content: body.slice(0, 20000), on: true, from: full } });
+        skills[name] = { desc, content: body, on: true, from: full };
+        loaded++;
+      }
+      setMsg('✓ imported ' + loaded + ' skill' + (loaded > 1 ? 's' : '') + ' from ' + full + ' — all armed');
+      setRepo('');
+    } catch (e) { setMsg('✕ ' + e.message); }
+    setBusy(false);
+  };
+  const importPaste = () => {
+    if (!pasteMd.trim() || !pasteName.trim()) { setMsg('name + markdown both needed'); return; }
+    set('skills', { ...skills, [pasteName.trim()]: { desc: 'pasted skill', content: pasteMd.slice(0, 20000), on: true, from: 'paste' } });
+    setPasteName(''); setPasteMd(''); setMsg('✓ skill armed: ' + pasteName.trim());
+  };
+  const importFile = (files) => {
+    const f = (files || [])[0];
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => {
+      const md = String(rd.result);
+      const fm = md.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+      let name = f.name.replace(/\.md$/i, '');
+      let desc = 'uploaded skill';
+      let body = md;
+      if (fm) {
+        body = fm[2];
+        const nm = fm[1].match(/^name:\s*(.+)$/m);
+        const dm = fm[1].match(/^description:\s*["']?(.+?)["']?\s*$/m);
+        if (nm) name = nm[1].trim();
+        if (dm) desc = dm[1].trim();
+      }
+      set('skills', { ...skills, [name]: { desc, content: body.slice(0, 20000), on: true, from: f.name } });
+      setMsg('✓ skill armed: ' + name);
+    };
+    rd.readAsText(f);
+  };
+  const toggle = (n) => set('skills', { ...skills, [n]: { ...skills[n], on: !skills[n].on } });
+  const kill = (n) => { const c = { ...skills }; delete c[n]; set('skills', c); };
+  const names = Object.keys(skills);
+  const armed = names.filter(n => skills[n].on).length;
+  return (
+    <div className="adm-backdrop" style={{ zIndex: 125 }} onClick={onClose}>
+      <div className="adm" style={{ gridTemplateColumns: '1fr', maxWidth: '640px' }} onClick={e => e.stopPropagation()}>
+        <section className="adm-body">
+          <div className="adm-head">
+            <div><h2>CRANE SKILLS</h2><p>Claude-compatible — any SKILL.md works here, and better: its output builds straight into the live preview. {armed} armed.</p></div>
+            <button className="adm-close" onClick={onClose} title="Close">✕</button>
+          </div>
+          <div className="adm-grid" style={{ gridTemplateColumns: '1fr' }}>
+            <Field label="Import from GitHub" hint="owner/repo or full URL — walks .claude/skills/*/SKILL.md and every standard layout. Uses your GitHub token from Providers.">
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input className="adm-input" placeholder="tyronne-os/ui-ux-pro-max-skill" value={repo} onChange={e => setRepo(e.target.value)} spellCheck={false} style={{ flex: 1 }} />
+                <button className="adm-btn gold" disabled={busy} onClick={importRepo}>{busy ? 'reading…' : 'Import'}</button>
+              </div>
+            </Field>
+            <Field label="Paste a SKILL.md">
+              <input className="adm-input" placeholder="skill name" value={pasteName} onChange={e => setPasteName(e.target.value)} style={{ width: '160px', marginBottom: '6px' }} spellCheck={false} />
+              <textarea className="adm-input" rows="4" placeholder="---\nname: my-skill\ndescription: what it does\n---\n\ninstructions…" value={pasteMd} onChange={e => setPasteMd(e.target.value)} style={{ fontFamily: "'Geist Mono',monospace", fontSize: '11px' }} />
+              <button className="adm-btn" onClick={importPaste} style={{ marginTop: '6px' }}>Arm pasted skill</button>
+            </Field>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button className="adm-btn" onClick={() => upRef.current && upRef.current.click()}>Upload SKILL.md file</button>
+              <input ref={upRef} type="file" accept=".md,.markdown,text/markdown" style={{ display: 'none' }} onChange={e => { importFile(e.target.files); e.target.value = ''; }} />
+              <span className="adm-hint">{msg}</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '34vh', overflowY: 'auto' }}>
+              {!names.length ? <p className="adm-hint" style={{ padding: '16px 0', textAlign: 'center' }}>No skills installed. Import your repo above — every SKILL.md becomes a switch.</p>
+              : names.map(n => (
+                <div key={n} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', borderRadius: '10px', border: '1px solid ' + (skills[n].on ? 'rgba(238,202,80,.35)' : 'var(--border)'), background: 'var(--surface)' }}>
+                  <button onClick={() => toggle(n)} title={skills[n].on ? 'armed — click to disarm' : 'click to arm'} style={{ border: 'none', background: 'none', cursor: 'pointer', color: skills[n].on ? 'var(--gold)' : 'var(--fg-5)', fontSize: '14px', padding: 0 }}>{skills[n].on ? '◉' : '○'}</button>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: '12px' }}>{n}</div>
+                    <div style={{ fontSize: '10px', color: 'var(--fg-5)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{skills[n].desc || ''} · <span style={{ fontFamily: "'Geist Mono',monospace" }}>{skills[n].from}</span></div>
+                  </div>
+                  <button onClick={() => kill(n)} title="Remove" style={{ border: 'none', background: 'none', color: '#fca5a5', cursor: 'pointer', padding: 0 }}>✕</button>
+                </div>
+              ))}
+            </div>
+            <p className="adm-hint">Armed skills inject into every build conversation. Toggle with the ◉ switch here, or {'/skill <name>'} in chat. Skills stack with /design and Jev routing.</p>
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
@@ -1944,6 +2066,7 @@ function App() {
   const [studioOpen, setStudioOpen] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
+  const [skillsOpen, setSkillsOpen] = useState(false);
   const [cardSrc, setCardSrc] = useState('uploads/amanda.jpg');
   useEffect(() => {
     let dead = false, url = null;
@@ -2360,7 +2483,18 @@ function App() {
         if (!val || /^off$/i.test(val) || /^off\b/i.test(val)) { setSetting('designStyle', ''); reply = 'Design Studio off — back to normal builds.'; }
         else { setSetting('designStyle', val); reply = 'DESIGN STUDIO ARMED — muse: ' + val.toUpperCase() + '.\n\nNow describe what to build. I will art-direct it end to end: one committed style, real type pairing, one earned accent, complete html/css/js shipped to the live preview. No AI slop survives this room. /design off to disarm.'; }
       }
-      else reply = 'Commands: /undo, /reset, /css, /design <muse>, /persona <text>, /instructions <text>, /profile, /profile reset';
+      else if (cmd === '/skill') {
+        const names = Object.keys(S.skills || {});
+        const arg = text.slice(cmd.length).trim();
+        if (!names.length) reply = 'No skills installed. Click the wand in the composer (or paste a repo like tyronne-os/ui-ux-pro-max-skill into the Skills panel) to import Claude-compatible SKILL.md files.';
+        else if (!arg) reply = 'CRANE SKILLS:\n' + names.map(n => (S.skills[n].on ? '◉ ' : '○ ') + n + (S.skills[n].on ? ' — armed' : '')).join('\n') + '\n\n/skill <name> toggles one. /design <muse> stacks with skills.';
+        else {
+          const hit = names.find(n => n.toLowerCase() === arg.toLowerCase());
+          if (!hit) reply = 'No skill named "' + arg + '". Installed: ' + names.join(', ');
+          else { const now = !S.skills[hit].on; setSetting('skills', { ...S.skills, [hit]: { ...S.skills[hit], on: now } }); reply = (now ? '◉ ARMED — ' : '○ disarmed — ') + hit + (now ? '. Its expertise now rides every build.' : '. It stays installed, just resting.'); }
+        }
+      }
+      else reply = 'Commands: /undo, /reset, /css, /design <muse>, /skill <name>, /persona <text>, /instructions <text>, /profile, /profile reset';
       setMsgs(m => m.concat({ text, who: 'me', via: 'TEXT' }, { text: reply, who: 'bot', via: '', local: true }));
       return;
     }
@@ -2447,6 +2581,7 @@ function App() {
         // someone remembers to type /design. Without this a small model falls
         // straight into Arial-on-grey, which is what the preview looked like.
         (!prof.replace && !spoken && S.designStyle !== 'off') ? DESIGN_STUDIO + (S.designStyle ? '\nActive muse: ' + S.designStyle : '') : '',
+        (!prof.replace && !spoken) ? Object.entries(S.skills || {}).filter(([k, v]) => v.on && v.content).map(([k, v]) => 'ACTIVE SKILL — ' + k + ' (follow its instructions as standing expertise):\n' + v.content).join('\n\n') : '',
         S.systemExtra, prof.persona, prof.instructions,
         prof.talksLike ? 'You talk like this — match this register, rhythm and vocabulary in every setting: ' + prof.talksLike : '',
         prof.looksLike ? 'You look like this — your appearance; describe yourself consistently whenever it comes up: ' + prof.looksLike : '',
@@ -2658,8 +2793,8 @@ function App() {
             <button className="tool-btn" title="Attach images" onClick={() => fileRef.current && fileRef.current.click()}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>
             </button>
-            <button className="tool-btn" title="Image">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 16l5-5 5 5M14 14l2-2 5 5"/></svg>
+            <button className="tool-btn" title="Crane Skills — Claude-compatible SKILL.md armory" onClick={() => setSkillsOpen(true)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M15 9h0M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5"/></svg>
             </button>
             <button className="tool-btn" title="Link">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
@@ -2973,6 +3108,7 @@ function App() {
   {studioOpen && <VoiceStudio S={S} set={setSetting} onClose={() => setStudioOpen(false)} />}
   {galleryOpen && <GalleryPanel model={model} onClose={() => setGalleryOpen(false)} />}
   {journalOpen && <MemoryPanel S={S} onClose={() => setJournalOpen(false)} />}
+  {skillsOpen && <SkillsPanel S={S} set={setSetting} onClose={() => setSkillsOpen(false)} />}
   {profEdit && <ProfileEditor key={profEdit} id={profEdit} profile={S.profiles[profEdit]} gpuBase={S.gpuBase} onJournal={() => setJournalOpen(true)} onSave={p => setProfile(profEdit, p)} onClose={() => setProfEdit(null)} />}
   {adminOpen && <AdminPanel s={S} set={setSetting} onEditProfile={setProfEdit} onClose={() => setAdminOpen(false)} models={models} online={online} onTest={refreshModels}
     onClearChat={() => setMsgs([])} onResetPatches={() => setPatches([])} voiceErr={voiceErr} />}
