@@ -38,7 +38,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def cors(self):
         origin = self.headers.get('Origin', '')
-        if origin in ALLOWED:
+        # Local pages (the builder served from your own machine) are always ours.
+        if origin in ALLOWED or origin.startswith('http://localhost') or origin.startswith('http://127.0.0.1'):
             self.send_header('Access-Control-Allow-Origin', origin)
             self.send_header('Vary', 'Origin')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
