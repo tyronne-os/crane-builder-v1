@@ -905,9 +905,9 @@ const DEFAULT_SETTINGS = {
   providers: { 
     anthropic: '', 'openrouter': '', 'huggingface': '', 'google': '', 'meta-muse': '',
     claude: '', 'gemini': '', 'openai': '',
-    github: '', kaggle: '', ngrok: ''
+    github: '', kaggle: '', ngrok: '', typesafe: ''
   },
-  gpuAuto: true, gpuRate: 0.35,
+  gpuAuto: true, gpuRate: 0.35, jevRoute: true,
   accent: '#eeca50', fontScale: 1, showAgent: true,
   cuEnabled: true, cuUrl: 'http://127.0.0.1:8765', cuToken: '', cuConfirm: true,
   profiles: {},
@@ -1445,6 +1445,15 @@ function App() {
     if (!html && !css && !js) return '';
     return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:system-ui,sans-serif;margin:16px;color:#111}' + css + '</style></head><body>' + html + '<scr' + 'ipt>' + js + '<\/scr' + 'ipt></body></html>';
   })();
+  // Jev — TypeSafe's System One decision engine (api.typesafe.ai/v1/systemone).
+  // One call, many typed questions: Choice picks a route, Noul is a yes/no with a
+  // probability. Used for intent routing before sends and guardrails before any
+  // feature code or computer action runs. No key -> returns null, everything
+  // downstream fails open.
+  const jevAsk = (state, questions) => S.providers?.typesafe
+    ? fetch('https://api.typesafe.ai/v1/systemone', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + S.providers.typesafe }, body: JSON.stringify({ model: 'jev-latest', state, questions }) })
+        .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+    : Promise.resolve(null);
   const feedRef = useRef(null);
   const [model, setModel] = useState(CFG.model);
   const [models, setModels] = useState([]);
@@ -1646,8 +1655,18 @@ function App() {
   }, [patches]);
   useEffect(() => { patches.filter(p => p.kind === 'js').forEach(p => runJs(p.code)); }, []);
 
-  const runFeature = (i) => {
+  const runFeature = async (i) => {
     const code = msgs[i].js;
+    // Jev guardrail: if Typesafe is configured, destructive code never runs.
+    if (S.providers?.typesafe) {
+      try {
+        const g = await jevAsk(String(code).slice(0, 4000), { danger: { type: 'noul', instructions: 'The code is destructive or dangerous: deletes files or data, wipes disks, exfiltrates data over the network, or runs harmful system commands' } });
+        if (g && g.answers && g.answers.danger && g.answers.danger.noul >= 0.7) {
+          setMsgs(ms => ms.map((x, j) => j === i ? { ...x, js: '', steps: (x.steps || []).concat([['⛔', 'Jev guardrail blocked this code — danger ' + Number(g.answers.danger.noul).toFixed(2), '#ef4444']]) } : x));
+          return;
+        }
+      } catch (e) {}
+    }
     const err = runJs(code);
     if (!err) setPatches(p => p.concat({ kind: 'js', code }));
     setMsgs(ms => ms.map((x, j) => j === i ? { ...x, js: '', steps: (x.steps || []).concat([[err ? '✕' : '✓', err ? 'Error: ' + err : 'Feature code ran', err ? '#ef4444' : '#a1a1aa']]) } : x));
@@ -1656,6 +1675,16 @@ function App() {
   const runComputer = async (i, actions) => {
     const acts = actions || msgs[i].cu;
     const note = (steps, shot) => setMsgs(ms => { const c = ms.slice(); const k = i == null ? c.length - 1 : i; c[k] = { ...c[k], cu: null, shot: shot || c[k].shot, steps: (c[k].steps || []).concat(steps) }; return c; });
+    // Jev guardrail: computer actions get a danger check before anything moves.
+    if (S.providers?.typesafe) {
+      try {
+        const g = await jevAsk(JSON.stringify(acts).slice(0, 4000), { danger: { type: 'noul', instructions: 'This list of computer actions is destructive or dangerous: deletes files or data, wipes disks, sends sensitive data somewhere, or runs harmful system commands' } });
+        if (g && g.answers && g.answers.danger && g.answers.danger.noul >= 0.7) {
+          note([['⛔', 'Jev guardrail blocked these actions — danger ' + Number(g.answers.danger.noul).toFixed(2), '#ef4444']]);
+          return;
+        }
+      } catch (e) {}
+    }
     try {
       const r = await fetch(S.cuUrl.replace(/\/+$/, '') + '/run', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Crane-Token': S.cuToken }, body: JSON.stringify({ actions: acts }) });
       const j = await r.json();
@@ -1796,6 +1825,36 @@ function App() {
     if (!opts.voice && !opts.hidden) { setDraft(''); setAtt([]); }
     busyRef.current = true; setBusy(true);
     const ac = new AbortController(); abortRef.current = ac;
+    // Jev intent routing (TypeSafe System One): one call classifies the request.
+    // chat -> Amanda keeps it; build -> hands the next sends to the coding model;
+    // image/video -> the center goes movie-screen with the prompt loaded. Confidence
+    // gates the switch — a coin-flip answer changes nothing.
+    if (S.providers?.typesafe && S.jevRoute && !opts.voice && !opts.hidden) {
+      try {
+        const jr = await jevAsk(text, {
+          route: { type: 'choice', instructions: 'Which part of the builder should handle this request', criteria: {
+            chat: 'Conversation, brainstorming, research discussion, planning — no buildable output expected',
+            build: 'Building or changing an app, site, or code — the coding model should take it',
+            image: 'Generating or editing an image',
+            video: 'Generating or editing a video or clip'
+          } }
+        });
+        const a = jr && jr.answers && jr.answers.route;
+        if (a) {
+          const conf = a.confidence == null ? 1 : a.confidence;
+          const jevStep = (st) => setMsgs(ms => { const c = ms.slice(); for (let k = c.length - 1; k >= 0; k--) if (c[k].who === 'bot') { c[k] = { ...c[k], steps: (c[k].steps || []).concat([st]) }; break; } return c; });
+          jevStep(['◆', 'Jev → ' + a.choice.toUpperCase() + ' · conf ' + Number(conf).toFixed(2), '#22d3ee']);
+          if (conf >= 0.5) {
+            if (a.choice === 'image') { setImgPrompt(text); setCenterMode('image'); }
+            else if (a.choice === 'video') { setVidPrompt(text); setCenterMode('video'); }
+            else if (a.choice === 'build' && S.nvidiaKey && (S.nvidiaModels || []).length && model !== S.nvidiaModels[0]) {
+              setModel(S.nvidiaModels[0]);
+              jevStep(['◆', 'Handing the next sends to ' + short(S.nvidiaModels[0]) + ' for coding', '#22d3ee']);
+            }
+          }
+        }
+      } catch (e) {}
+    }
     const talking = speakerOn && (liveRef.current || opts.voice || S.autoSpeak);
     if (talking) VoiceOut.stop();
     const chunker = talking ? makeChunker(t => { if (!ac.signal.aborted) VoiceOut.speak(t, sref.current).catch(() => {}); }) : null;
@@ -2041,6 +2100,15 @@ function App() {
                   )) : (
                     <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>no free models came back — check your connection</div>
                   )}
+                  <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
+                  <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>TYPESAFE · SYSTEM ONE</div>
+                  <div className="mrow" style={{cursor:'pointer'}} onClick={() => {
+                    if (!S.providers.typesafe) { const key = prompt('TypeSafe API key — TYPESAFE_API_KEY from console.typesafe.ai/keys'); if (key) setSetting('providers', {...S.providers, typesafe: key.trim()}); }
+                    else setSetting('jevRoute', !S.jevRoute);
+                  }}>
+                    <span className="mname">Jev</span>
+                    <span className="mtag" style={{color: !S.providers.typesafe ? '#71717a' : S.jevRoute ? '#22d3ee' : '#eeca50'}}>{!S.providers.typesafe ? 'needs key' : S.jevRoute ? 'routing + guardrails ON' : 'routing off — click to arm'}</span>
+                  </div>
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>PROVIDERS · API KEYS</div>
                   {Object.entries(S.providers || {}).map(([k,v]) => (
