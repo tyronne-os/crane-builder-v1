@@ -15,9 +15,11 @@ Endpoints:
 First run downloads the XTTS-v2 model (~1.8 GB) into ./xtts-data.
 CPU synthesis runs around real-time; a GPU build of torch makes it instant.
 
-Setup (in a venv):
-  pip install TTS==0.22.0 soundfile numpy flask flask-cors
-  python voice_clone_server.py
+Setup (one-time, Python 3.11 — the coqui engine needs it):
+  uv venv clone-env --python 3.11
+  uv pip install -p clone-env/bin/python coqui-tts "transformers==4.47.1" flask flask-cors soundfile numpy
+  uv pip install -p clone-env/bin/python torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+  bash ~/staff-build/start-amanda-stack.sh --clone
 """
 import base64
 import io
