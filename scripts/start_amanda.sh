@@ -9,7 +9,9 @@ PROXY=/home/trell/crane-builder-v1/scripts/cors_proxy.py
 # Stop a previous Amanda instance, keep the 8080 STAFF server alone.
 pkill -f "llama-server.*11437" 2>/dev/null; sleep 1
 
-nohup "$SRV" -m "$MODEL" --alias Amanda-Qwen-1.5B --port 11437 --ctx-size 8192 --threads 4 > /tmp/amanda-11437.log 2>&1 &
+# Benchmarked on the Ryzen 3 7320U: auto (8) threads ~7.9 tok/s beats 4 threads
+# ~6.9 tok/s, so let llama-server auto-detect — no --threads flag.
+nohup "$SRV" -m "$MODEL" --alias Amanda-Qwen-1.5B --port 11437 --ctx-size 8192 > /tmp/amanda-11437.log 2>&1 &
 
 # The proxy gives the hosted builder page CORS + private-network access.
 if ! curl -m 2 -s -o /dev/null http://localhost:11438/; then
