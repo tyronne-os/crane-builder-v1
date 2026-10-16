@@ -2734,7 +2734,13 @@ function App() {
               .catch(e => setMsgs(ms => { const c = ms.slice(); for (let k = c.length - 1; k >= 0; k--) if (c[k].who === 'bot') { c[k] = { ...c[k], steps: (c[k].steps || []).concat([['✕', 'Journal save failed: ' + e.message + ' — is her memory server awake on 8092?', '#ef4444']]) }; break; } return c; }));
           } catch (e) {}
         }
-        const termBlock = [...out.matchAll(/```terminal[^\n]*\n([\s\S]*?)```/gi)].map(b => b[1].trim())[0];
+        let termBlock = [...out.matchAll(/```terminal[^\n]*\n([\s\S]*?)```/gi)].map(b => b[1].trim())[0];
+        if (!termBlock) {
+          // lenient: any fence whose body parses as {"cmd": "..."} counts as a terminal block
+          for (const f of out.matchAll(/```[a-z]*[^\n]*\n([\s\S]*?)```/gi)) {
+            try { const j = JSON.parse(f[1].trim()); if (j && typeof j.cmd === 'string') { termBlock = f[1].trim(); break; } } catch (e) {}
+          }
+        }
         if (termBlock && (opts.depth || 0) < 5) {
           try {
             const tj = JSON.parse(termBlock);
