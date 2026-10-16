@@ -224,7 +224,7 @@ def reflect(graph, mood):
     fname = "reflection-%s.md" % time.strftime("%Y%m%d")
     with open(os.path.join(VAULT, "reflections", fname), "w", encoding="utf-8") as f:
         f.write("---\nat: %s\n---\n\n%s\n" % (time.strftime("%Y-%m-%d %H:%M"), "\n\n".join(lines)))
-    mood["valence"] *= 0.85   // sleep softens extremes
+    mood["valence"] *= 0.85   # sleep softens extremes
     mood["updated"] = now_ms()
     jsave(MOOD_PATH, mood)
     jsave(GRAPH_PATH, graph)
