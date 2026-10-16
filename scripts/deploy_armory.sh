@@ -16,7 +16,7 @@ for i in $(seq 1 30); do
 done
 
 echo "[deploy] streaming the armory payload (token via stdin, not on disk)…"
-gcloud compute ssh $VM --zone=$ZONE --command='bash -s' \
+gcloud compute ssh $VM --zone=$ZONE --command='sudo bash -s' \
   < <(echo "$HFTOK"; cat "$(dirname "$0")/armory_remote.sh")
 
 echo "[deploy] checking download progress in 60s…"
