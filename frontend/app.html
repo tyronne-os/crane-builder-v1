@@ -961,7 +961,7 @@ const DEFAULT_SETTINGS = {
   agentName: 'Amanda', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'kokoro', voice: 'sarah', voiceSpeed: 1.0, ttsUrl: 'http://127.0.0.1:8090/v1', ttsGpuUrl: 'http://127.0.0.1:8090/v1', autoSpeak: true, micMode: 'toggle', sttSource: 'browser',
   userName: '', vernacular: '', liveGreet: true, bargeIn: true, avatarOn: true, webResearch: true, listenLang: 'English', berylUrl: 'http://127.0.0.1:8882/v1', voiceTemp: 0.8, voiceV: 2, voiceFx: {},
   nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU',
-  registryUrl: 'http://localhost:11436/v1', cpuBase: 'http://localhost:11438/v1', miniBase: 'http://localhost:11439/v1', nvidiaModels: ['zai-org/glm-4.5-air', 'zai-org/glm-4.5'], nvidiaKey: '', nvidiaEnterpriseKey: '', nvidiaEnterpriseModels: [],
+  registryUrl: 'http://localhost:11436/v1', cpuBase: 'http://localhost:11438/v1', miniBase: 'http://localhost:11439/v1', hfGpuOn: false, nvidiaModels: ['zai-org/glm-4.5-air', 'zai-org/glm-4.5'], nvidiaKey: '', nvidiaEnterpriseKey: '', nvidiaEnterpriseModels: [],
   providers: { 
     anthropic: '', 'openrouter': '', 'huggingface': '', 'google': '', 'meta-muse': '',
     claude: '', 'gemini': '', 'openai': '',
@@ -1851,6 +1851,11 @@ function App() {
   const [models, setModels] = useState([]);
   const [cpuModels, setCpuModels] = useState([]);
   const [miniModels, setMiniModels] = useState([]);
+  // HF GPU — the Inference Providers router (free with PRO credits). The user
+  // powers it themselves: a toggle, a live connectivity light, a usage clock.
+  const [hfGpuModels, setHfGpuModels] = useState([]);
+  const [hfGpuConnected, setHfGpuConnected] = useState(false);
+  const [hfGpuTimer, setHfGpuTimer] = useState(() => { try { return JSON.parse(localStorage.getItem('crane.hfGpu') || '{"seconds":0,"requests":0}'); } catch (e) { return { seconds: 0, requests: 0 }; } });
   const [menuOpen, setMenuOpen] = useState(false);
   const [online, setOnline] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -2012,6 +2017,26 @@ function App() {
   }, []);
   // When a NVIDIA key is present, pull the live NIM catalog so the dropdown shows
   // everything the key unlocks — the full model sea, not a hand-typed list.
+  // The HF GPU bay: one fetch lists the whole router catalog; the same call is
+  // the connectivity light. Rechecked every 60s while powered on.
+  const HF_ROUTER = 'https://router.huggingface.co/v1';
+  const loadHfGpu = (silent) => {
+    if (!hfToken) { setHfGpuConnected(false); return; }
+    fetch(HF_ROUTER + '/models', { headers: { Authorization: 'Bearer ' + hfToken } })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => { setHfGpuModels((j.data || []).map(m => m.id).filter(Boolean)); setHfGpuConnected(true); })
+      .catch(() => { setHfGpuConnected(false); if (!silent) setVoiceErr('HF GPU unreachable — check your HF token (Settings or the token box in image mode)'); });
+  };
+  useEffect(() => { if (S.hfGpuOn) { loadHfGpu(true); const t = setInterval(() => loadHfGpu(true), 60000); return () => clearInterval(t); } }, [S.hfGpuOn, hfToken]);
+  useEffect(() => {
+    if (!S.hfGpuOn) return;
+    const t = setInterval(() => setHfGpuTimer(m => {
+      const n = { seconds: m.seconds + 1, requests: m.requests };
+      try { localStorage.setItem('crane.hfGpu', JSON.stringify(n)); } catch (e) {}
+      return n;
+    }), 1000);
+    return () => clearInterval(t);
+  }, [S.hfGpuOn]);
   useEffect(() => {
     if (!S.nvidiaKey) { setNvidiaCatalog([]); return; }
     fetch(NVIDIA_BASE + '/models', { headers: { Authorization: 'Bearer ' + S.nvidiaKey } })
@@ -2353,6 +2378,7 @@ function App() {
       const nvidia = nvidiaList.some(n => n.id === model);
       const onCpu = cpuModels.includes(model);
       const onMini = miniModels.includes(model);
+      const onHfGpu = hfGpuModels.includes(model);
       const nvidiaListEnt = nvidiaModels(S.nvidiaEnterpriseModels);
       const nvidiaEnt = nvidiaListEnt.some(n => n.id === model);
       const provider = (model.split('/')[0]).toLowerCase();
@@ -2368,11 +2394,14 @@ function App() {
         openai: 'https://api.openai.com/v1'
       };
       const provBase = providerBases[provider];
-      const target = nvidia || nvidiaEnt ? NVIDIA_BASE : provBase ? provBase : onMini ? S.miniBase : onCpu ? S.cpuBase : S.gpuBase;
+      const target = nvidia || nvidiaEnt ? NVIDIA_BASE : onHfGpu ? HF_ROUTER : provBase ? provBase : onMini ? S.miniBase : onCpu ? S.cpuBase : S.gpuBase;
       let headers = {};
       if (nvidiaEnt) {
         if (!S.nvidiaEnterpriseKey) throw new Error('NVIDIA Enterprise API key not set. Open Settings → NVIDIA Enterprise API key');
         headers = { Authorization: 'Bearer ' + S.nvidiaEnterpriseKey };
+      } else if (onHfGpu) {
+        if (!hfToken) throw new Error('HF token needed to power the HF GPU — paste it into the HF token box (switch to IMAGE mode) or Settings');
+        headers = { Authorization: 'Bearer ' + hfToken };
       } else if (nvidia) {
         if (!S.nvidiaKey) throw new Error('NVIDIA API key not set');
         headers = { Authorization: 'Bearer ' + S.nvidiaKey };
@@ -2400,6 +2429,7 @@ function App() {
       const wireId = model.startsWith('opencode/') ? model.slice('opencode/'.length) : model;
       const res = await call(target, wireId, headers);
       if (!res.ok) throw new Error('HTTP ' + res.status);
+      if (onHfGpu) setHfGpuTimer(m => { const n = { seconds: m.seconds, requests: m.requests + 1 }; try { localStorage.setItem('crane.hfGpu', JSON.stringify(n)); } catch (e) {} return n; });
       if (!S.stream) { const j = await res.json(); out = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || ''; setLast(out || '…'); if (chunker) chunker.push(out); }
       else {
       const reader = res.body.getReader(), dec = new TextDecoder();
@@ -2498,6 +2528,10 @@ function App() {
       <span className="status-dot" style={gpuMeter.on ? {} : { background: 'var(--fg-5)', animation: 'none' }}></span>
       GPU {gpuMeter.on ? 'ON' : 'OFF'} · ${(gpuMeter.cents / 100).toFixed(4)}
     </div>}
+    {S.showStatus && S.hfGpuOn && <div className="status-pill" title={'HF GPU session — ' + hfGpuTimer.requests + ' requests sent, ' + hfGpuTimer.seconds + 's powered. Connectivity rechecked every minute; the dot stays green only when the router answers.'}>
+      <span className="status-dot" style={hfGpuConnected ? {} : { background: '#eeca50', animation: 'none' }}></span>
+      HF {hfGpuConnected ? 'CONNECTED' : 'CHECKING'} · {String(Math.floor(hfGpuTimer.seconds / 60)).padStart(2, '0')}:{String(hfGpuTimer.seconds % 60).padStart(2, '0')} · {hfGpuTimer.requests} req
+    </div>}
     {updateReady && <div className="status-pill" style={{cursor:'pointer', borderColor:'rgba(238,202,80,.6)', color:'var(--gold)'}} title={'A new build is live — reload to pick it up. Same-origin check only; the page never phones home.'} onClick={() => location.reload()}>
       <span className="status-dot" style={{ background: 'var(--gold)', animation: 'none' }}></span>
       UPDATE READY · RELOAD
@@ -2577,6 +2611,18 @@ function App() {
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>NVIDIA ENTERPRISE · DIGITAL HUMANS</div>
                   {nvidiaEntAll.length ? nvidiaEntAll.map(id => <ModelRow key={id} id={id} label={short(id)} tag="NVIDIA ENT" tagColor="#ff7a00" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>{S.nvidiaEnterpriseKey ? 'enterprise catalog came back empty — paste ids in Settings' : 'enter your NVIDIA Enterprise key below — its catalog loads automatically'}</div>}
+                  <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
+                  <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>HF GPU · FREE INFERENCE</div>
+                  <div className="mrow" style={{cursor:'pointer'}} onClick={() => setSetting('hfGpuOn', !S.hfGpuOn)} title="Power the HF Inference Providers GPU yourself">
+                    <span className="mname" style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={S.hfGpuOn ? '#34d399' : 'currentColor'} strokeWidth="2.4" strokeLinecap="round"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>
+                      HF GPU {S.hfGpuOn ? 'ON' : 'OFF'}
+                    </span>
+                    <span className="mtag" style={{color: S.hfGpuOn ? (hfGpuConnected ? '#34d399' : '#eeca50') : '#71717a'}}>
+                      {S.hfGpuOn ? (hfGpuConnected ? 'POWERED BY HF · ' + hfGpuModels.length + ' models' : 'connecting…') : 'click to power on'}
+                    </span>
+                  </div>
+                  {S.hfGpuOn && (hfGpuModels.length ? hfGpuModels.map(id => <ModelRow key={id} id={id} label={short(id)} tag="HF" tagColor="#eab308" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>{hfToken ? 'loading the catalog…' : 'paste your HF token (IMAGE mode token box) to power on'}</div>)}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>OPENCODE · FREE VIA OPENROUTER</div>
                   {opencodeModels === null ? (
