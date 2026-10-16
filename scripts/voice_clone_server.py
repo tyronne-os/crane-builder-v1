@@ -17,7 +17,7 @@ CPU synthesis runs around real-time; a GPU build of torch makes it instant.
 
 Setup (one-time, Python 3.11 — the coqui engine needs it):
   uv venv clone-env --python 3.11
-  uv pip install -p clone-env/bin/python coqui-tts "transformers==4.47.1" flask flask-cors soundfile numpy
+  uv pip install -p clone-env/bin/python coqui-tts "transformers==4.57.1" flask flask-cors soundfile numpy
   uv pip install -p clone-env/bin/python torch torchaudio --index-url https://download.pytorch.org/whl/cpu
   bash ~/staff-build/start-amanda-stack.sh --clone
 """
