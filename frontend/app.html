@@ -585,6 +585,43 @@ const DESIGN_STUDIO = [
   'Expensive details: subtle grain overlays, layered shadows (never one blurry blob), 1px borders at 8-12% white, hover states on everything interactive, micro-interactions, scroll-linked reveals, consistent radii, optically kerned display type.',
   'Process: 1) name the muse in one line; 2) state the type pairing, accent and layout concept in one line; 3) ship complete html, css and js fences — the centre preview is your canvas and renders live, so make the first screen gorgeous immediately, then layer behaviour in the js block. No placeholders, no "rest of the code here". Every deliverable should look at home on 21st.dev or an Awwwards-listed studio site.',
 ].join('\n');
+
+// ── media vault ─────────────────────────────────────────────────────────────
+// Photos and clips per model, stored in IndexedDB (localStorage is too small).
+// The lowest-index photo is the model's portfolio picture — it becomes the agent
+// card image and the first tile of the gallery.
+const mediaDB = (() => {
+  let dbp = null;
+  const open = () => dbp || (dbp = new Promise((res, rej) => {
+    const rq = indexedDB.open('crane-media', 1);
+    rq.onupgradeneeded = () => rq.result.createObjectStore('media');
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror = () => rej(rq.error);
+  }));
+  const tx = async (mode, fn) => {
+    const db = await open();
+    return new Promise((res, rej) => {
+      const t = db.transaction('media', mode);
+      const rq = fn(t.objectStore('media'));
+      rq.onsuccess = () => res(rq.result);
+      rq.onerror = () => rej(rq.error);
+    });
+  };
+  const keyOf = (model, i) => model + '::' + i;
+  const listKeys = async (model) => {
+    const keys = await tx('readonly', s => s.getAllKeys());
+    return (keys || []).filter(k => typeof k === 'string' && k.startsWith(model + '::'))
+      .sort((a, b) => Number(a.split('::')[1]) - Number(b.split('::')[1]));
+  };
+  return {
+    list: listKeys,
+    allKeys: () => tx('readonly', s => s.getAllKeys()),
+    put: async (model, i, blob) => tx('readwrite', s => s.put(blob, keyOf(model, i))),
+    get: async (k) => tx('readonly', s => s.get(k)),
+    del: async (k) => tx('readwrite', s => s['delete'](k)),
+    nextIndex: async (model) => (await listKeys(model)).length,
+  };
+})();
 const CFG = (() => {
   const q = new URLSearchParams(location.search);
   return { base: (q.get('api') || 'http://localhost:11435/v1').replace(/\/+$/, ''), model: q.get('model') || DEFAULT_LOCAL_MODEL };
@@ -728,7 +765,8 @@ const VoiceOut = (() => {
       try { return await post(S.ttsGpuUrl, { model: 'vibevoice', voice: S.voice, input: text, speed: S.voiceSpeed }); }
       catch (e) { try { return await post(S.ttsUrl, kokoro); } catch (e2) { throw new Error('VibeVoice (' + S.ttsGpuUrl + ') and Kokoro (' + S.ttsUrl + ') are both offline'); } }
     }
-    return post(S.ttsUrl, kokoro);
+    const base = String(S.voice || '').startsWith('clone:') ? (S.cloneUrl || 'http://127.0.0.1:8091/v1') : S.ttsUrl;
+    return post(base, kokoro);
   };
   const pump = async () => {
     if (pumping) return; pumping = true;
@@ -924,7 +962,7 @@ const DEFAULT_SETTINGS = {
     claude: '', 'gemini': '', 'openai': '',
     github: '', kaggle: '', ngrok: '', typesafe: ''
   },
-  gpuAuto: true, gpuRate: 0.35, jevRoute: true, designStyle: '',
+  gpuAuto: true, gpuRate: 0.35, jevRoute: true, designStyle: '', cloneUrl: 'http://127.0.0.1:8091/v1',
   accent: '#eeca50', fontScale: 1, showAgent: true,
   cuEnabled: true, cuUrl: 'http://127.0.0.1:8765', cuToken: '', cuConfirm: true,
   profiles: {},
@@ -950,6 +988,213 @@ function ModelRow({ id, label, tag, tagColor, active, hasProfile, onPick, onEdit
     </div>
   );
 }
+
+function MediaSlots({ model }) {
+  const [items, setItems] = useState([]);
+  const fileRef = useRef(null);
+  const urlsRef = useRef([]);
+  const load = async () => {
+    const keys = await mediaDB.list(model).catch(() => []);
+    const its = [];
+    for (const k of keys) {
+      const blob = await mediaDB.get(k).catch(() => null);
+      if (!blob) continue;
+      const url = URL.createObjectURL(blob);
+      urlsRef.current.push(url);
+      its.push({ key: k, url, type: blob.type || 'image/jpeg' });
+    }
+    setItems(its);
+  };
+  useEffect(() => { load(); return () => { urlsRef.current.forEach(u => URL.revokeObjectURL(u)); urlsRef.current = []; }; }, [model]);
+  const add = async (files) => {
+    for (const f of [...files].slice(0, 10)) {
+      let blob = f;
+      if (f.type.startsWith('image/')) {
+        try {
+          const bmp = await createImageBitmap(f);
+          const scale = Math.min(1, 768 / Math.max(bmp.width, bmp.height));
+          const c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(bmp.width * scale)); c.height = Math.max(1, Math.round(bmp.height * scale));
+          c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+          blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.85));
+        } catch (e) {}
+      } else if (f.size > 25 * 1024 * 1024) { continue; }
+      const i = await mediaDB.nextIndex(model);
+      if (i >= 10) break;
+      await mediaDB.put(model, i, blob);
+    }
+    urlsRef.current.forEach(u => URL.revokeObjectURL(u)); urlsRef.current = [];
+    load();
+  };
+  const del = async (k) => { await mediaDB.del(k); urlsRef.current.forEach(u => URL.revokeObjectURL(u)); urlsRef.current = []; load(); };
+  const slotStyle = { width: '100%', aspectRatio: '1', borderRadius: '10px', border: '1px solid var(--border-mid)', overflow: 'hidden', background: 'var(--surface2)', position: 'relative', cursor: 'pointer' };
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px' }}>
+        {items.map((it, i) => (
+          <div key={it.key} style={slotStyle} title={i === 0 ? 'Portfolio photo — first tile of the gallery' : 'Remove'}>
+            {it.type.startsWith('video') ? <video src={it.url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} muted /> : <img src={it.url} alt="model media" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+            {i === 0 && <span style={{ position: 'absolute', top: 3, left: 3, background: 'var(--gold)', color: '#1a1204', fontSize: '8px', fontWeight: 700, letterSpacing: '.08em', padding: '1px 5px', borderRadius: '4px' }}>PORTFOLIO</span>}
+            <button onClick={() => del(it.key)} style={{ position: 'absolute', top: 3, right: 3, width: 16, height: 16, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,.65)', color: '#fca5a5', fontSize: 11, lineHeight: '16px', textAlign: 'center', cursor: 'pointer', padding: 0 }}>×</button>
+          </div>
+        ))}
+        {items.length < 10 && (
+          <button onClick={() => fileRef.current && fileRef.current.click()} style={Object.assign({}, slotStyle, { display: 'grid', placeItems: 'center', color: 'var(--fg-5)', fontSize: '20px' })} title="Add photo or clip (max 10)">+</button>
+        )}
+      </div>
+      <input ref={fileRef} type="file" accept="image/*,video/*" multiple style={{ display: 'none' }} onChange={e => { add(e.target.files); e.target.value = ''; }} />
+      <p className="adm-hint" style={{ marginTop: '6px' }}>Up to 10 photos or diffusion clips. The first is her portfolio photo — it becomes the agent card image and the gallery cover.</p>
+    </div>
+  );
+}
+
+function GalleryPanel({ model, onClose }) {
+  const [mode, setMode] = useState('model');
+  const [items, setItems] = useState([]);
+  const urlsRef = useRef([]);
+  const load = async () => {
+    urlsRef.current.forEach(u => URL.revokeObjectURL(u)); urlsRef.current = [];
+    const keys = mode === 'all'
+      ? (await mediaDB.allKeys().catch(() => [])).filter(k => typeof k === 'string' && k.includes('::')).sort()
+      : await mediaDB.list(model).catch(() => []);
+    const its = [];
+    for (const k of keys) {
+      const blob = await mediaDB.get(k).catch(() => null);
+      if (!blob) continue;
+      const url = URL.createObjectURL(blob);
+      urlsRef.current.push(url);
+      its.push({ key: k, url, type: blob.type || 'image/jpeg', owner: k.split('::')[0], idx: k.split('::')[1] });
+    }
+    setItems(its);
+  };
+  useEffect(() => { load(); return () => { urlsRef.current.forEach(u => URL.revokeObjectURL(u)); urlsRef.current = []; }; }, [mode, model]);
+  return (
+    <div className="adm-backdrop" style={{ zIndex: 120 }} onClick={onClose}>
+      <div className="adm" style={{ gridTemplateColumns: '1fr', maxWidth: '760px' }} onClick={e => e.stopPropagation()}>
+        <section className="adm-body">
+          <div className="adm-head">
+            <div><h2>GALLERY</h2><p>{mode === 'all' ? 'Every model' : short(model) + ' — portfolio media'}</p></div>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button className="adm-btn" onClick={() => setMode(m => m === 'model' ? 'all' : 'model')}>{mode === 'model' ? 'ALL MODELS' : 'THIS MODEL'}</button>
+              <button className="adm-close" onClick={onClose} title="Close">✕</button>
+            </div>
+          </div>
+          {!items.length ? <p className="adm-hint" style={{ padding: '24px 0', textAlign: 'center' }}>No media yet — open a model's ✎ in the model menu and add up to 10 photos or clips.</p> : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '10px', maxHeight: '62vh', overflowY: 'auto', paddingRight: '4px' }}>
+            {items.map(it => (
+              <div key={it.key} style={{ position: 'relative', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border-mid)', aspectRatio: '1', background: 'var(--surface2)' }}>
+                {it.type.startsWith('video') ? <video src={it.url} controls style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <img src={it.url} alt="gallery" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                {it.idx === '0' && <span style={{ position: 'absolute', top: 4, left: 4, background: 'var(--gold)', color: '#1a1204', fontSize: '8px', fontWeight: 700, letterSpacing: '.08em', padding: '1px 5px', borderRadius: '4px' }}>PORTFOLIO</span>}
+                {mode === 'all' && <span style={{ position: 'absolute', bottom: 4, left: 4, background: 'rgba(0,0,0,.65)', color: '#e4e4e7', fontSize: '9px', padding: '1px 6px', borderRadius: '4px', maxWidth: '90%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{short(it.owner)}</span>}
+              </div>
+            ))}
+          </div>)}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function VoiceStudio({ S, set, onClose }) {
+  const [rec, setRec] = useState(null);
+  const [refUrl, setRefUrl] = useState(null);
+  const [refBlob, setRefBlob] = useState(null);
+  const [cloneName, setCloneName] = useState('');
+  const [clones, setClones] = useState(() => { try { return JSON.parse(localStorage.getItem('crane.voices') || '[]'); } catch (e) { return []; } });
+  const [msg, setMsg] = useState('');
+  const engines = Object.keys(VOICE_ENGINES);
+  const voices = (VOICE_ENGINES[S.voiceEngine] || { voices: [] }).voices.map(v => v[0]).concat(clones.map(c => 'clone:' + c.name));
+  const upRef = useRef(null);
+  const startRec = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const r = new MediaRecorder(stream);
+      const chunks = [];
+      r.ondataavailable = e => chunks.push(e.data);
+      r.onstop = () => { const b = new Blob(chunks, { type: 'audio/webm' }); setRefBlob(b); setRefUrl(URL.createObjectURL(b)); stream.getTracks().forEach(t => t.stop()); };
+      r.start();
+      setRec(r);
+    } catch (e) { setMsg('Microphone blocked: ' + e.message); }
+  };
+  const stopRec = () => { if (rec) { rec.stop(); setRec(null); } };
+  const makeClone = async () => {
+    if (!refBlob || !cloneName.trim()) { setMsg('Record or upload a reference, then name the voice.'); return; }
+    setMsg('Training clone…');
+    try {
+      const b64 = await new Promise(r => { const rd = new FileReader(); rd.onload = () => r(String(rd.result).split(',')[1]); rd.readAsDataURL(refBlob); });
+      const r = await fetch((S.cloneUrl || 'http://127.0.0.1:8091/v1').replace(/\/+$/, '') + '/clone', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: cloneName.trim(), audio_b64: b64 }) });
+      const t = await r.text();
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + t.slice(0, 120));
+      const list = clones.concat([{ name: cloneName.trim(), at: Date.now() }]);
+      localStorage.setItem('crane.voices', JSON.stringify(list));
+      setClones(list);
+      set('voice', 'clone:' + cloneName.trim());
+      set('voiceEngine', 'kokoro');
+      setMsg('✓ Clone "' + cloneName.trim() + '" created and selected. Speak a test line below.');
+    } catch (e) { setMsg('✕ ' + e.message + ' — is the voice-clone server running on 8091? (scripts/voice_clone_server.py)'); }
+  };
+  const delClone = (name) => {
+    const list = clones.filter(c => c.name !== name);
+    localStorage.setItem('crane.voices', JSON.stringify(list));
+    setClones(list);
+    if (S.voice === 'clone:' + name) set('voice', 'sarah');
+  };
+  const fx = (k, label) => (
+    <label key={k} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--fg-3)' }}>
+      <span style={{ width: '72px' }}>{label}</span>
+      <input type="range" min={k === 'room' ? 0 : -6} max={6} step="0.5" value={(S.voiceFx || {})[k] || 0} onChange={e => set('voiceFx', { ...(S.voiceFx || {}), [k]: Number(e.target.value) })} style={{ flex: 1 }} />
+    </label>
+  );
+  return (
+    <div className="adm-backdrop" style={{ zIndex: 120 }} onClick={onClose}>
+      <div className="adm" style={{ gridTemplateColumns: '1fr', maxWidth: '560px' }} onClick={e => e.stopPropagation()}>
+        <section className="adm-body">
+          <div className="adm-head">
+            <div><h2>VOICE STUDIO</h2><p>Engine, voice, character — and cloning</p></div>
+            <button className="adm-close" onClick={onClose} title="Close">✕</button>
+          </div>
+          <div className="adm-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+            <Field label="Engine"><select className="adm-input" value={S.voiceEngine} onChange={e => { set('voiceEngine', e.target.value); set('voice', (VOICE_ENGINES[e.target.value].voices[0] || ['sarah'])[0]); }}>{engines.map(k => <option key={k} value={k}>{VOICE_ENGINES[k].label}</option>)}</select></Field>
+            <Field label="Voice"><select className="adm-input" value={S.voice} onChange={e => set('voice', e.target.value)}>{voices.map(v => <option key={v} value={v}>{v.startsWith('clone:') ? '★ ' + v.slice(6) + ' (clone)' : v}</option>)}</select></Field>
+            <Field label={'Speed · ' + S.voiceSpeed.toFixed(2)}><input type="range" min="0.6" max="1.4" step="0.02" value={S.voiceSpeed} onChange={e => set('voiceSpeed', Number(e.target.value))} style={{ width: '100%' }} /></Field>
+            <Field label="Test"><button className="adm-btn" onClick={() => VoiceOut.speak('Hey. This is how I sound now — warm, clear, and all yours.', S).catch(e => setMsg('✕ ' + e.message))}>Speak a test line</button></Field>
+          </div>
+          <div className="adm-grid" style={{ gridTemplateColumns: '1fr 1fr', marginTop: '10px' }}>
+            <Field label="Warmth">{fx('warmth', 'Warm ↔ bright')}</Field>
+            <Field label="Presence">{fx('presence', 'Crisp ↔ soft')}</Field>
+            <Field label="Air">{fx('air', 'Airy ↔ close')}</Field>
+            <Field label="Room">{fx('room', 'Dry ↔ roomy')}</Field>
+          </div>
+          <div style={{ height: '1px', background: 'var(--border)', margin: '14px 0' }}></div>
+          <div className="adm-grid" style={{ gridTemplateColumns: '1fr' }}>
+            <div className="adm-label">VOICE CLONING</div>
+            <div className="adm-hint">Record or upload 10–30 seconds of the voice you want. The clone server (scripts/voice_clone_server.py, port 8091) learns it and it joins your voice list as clone:name.</div>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              {!rec ? <button className="adm-btn" onClick={startRec}>● Record reference</button> : <button className="adm-btn gold" onClick={stopRec}>■ Stop recording</button>}
+              <button className="adm-btn" onClick={() => upRef.current && upRef.current.click()}>Upload audio</button>
+              <input ref={upRef} type="file" accept="audio/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files[0]; if (f) { setRefBlob(f); setRefUrl(URL.createObjectURL(f)); } e.target.value = ''; }} />
+              <input className="adm-input" placeholder="Name her voice (e.g. amanda)" value={cloneName} onChange={e => setCloneName(e.target.value)} style={{ width: '180px' }} spellCheck={false} />
+              <button className="adm-btn gold" onClick={makeClone}>Create clone</button>
+            </div>
+            {refUrl && <audio src={refUrl} controls style={{ width: '100%' }}></audio>}
+            {clones.length > 0 && (
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '6px' }}>
+                {clones.map(c => (
+                  <span key={c.name} style={{ display: 'inline-flex', gap: '6px', alignItems: 'center', padding: '4px 10px', borderRadius: '999px', border: S.voice === 'clone:' + c.name ? '1px solid rgba(238,202,80,.6)' : '1px solid var(--border-mid)', fontSize: '11px', cursor: 'pointer' }} onClick={() => { set('voice', 'clone:' + c.name); set('voiceEngine', 'kokoro'); }}>
+                    ★ {c.name}{S.voice === 'clone:' + c.name ? ' · live' : ''}
+                    <button onClick={e => { e.stopPropagation(); delClone(c.name); }} style={{ border: 'none', background: 'none', color: '#fca5a5', cursor: 'pointer', padding: 0 }}>×</button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <span className="adm-hint">{msg}</span>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
 
 function ProfileEditor({ id, profile, gpuBase, onSave, onClose }) {
   const kind = profKind(id);
@@ -979,11 +1224,15 @@ function ProfileEditor({ id, profile, gpuBase, onSave, onClose }) {
           </div>
           <div className="adm-grid" style={{ gridTemplateColumns: '1fr' }}>
             <Field label={kind === 'diffusion' ? 'Style persona (put before every prompt)' : 'Persona'} hint={kind === 'chat' ? 'Who this model is: name, personality, tone' : undefined}>{area('persona', 3, kind === 'diffusion' ? 'cinematic, 35mm film, moody gold lighting' : 'You are Beryl, a confident, witty senior engineer…')}</Field>
+            {kind === 'chat' && <Field label="TALKS LIKE" hint="How she converses in different settings — register, rhythm, slang, code-switching between work and late-night">{area('talksLike', 3, 'At work: crisp and technical, no filler. After hours: softer, playful, teasing…')}</Field>}
+            {kind === 'chat' && <Field label="LOOKS LIKE" hint="Her appearance — the agent describes herself consistently, and it seeds avatar and diffusion work">{area('looksLike', 3, 'Late 30s, warm brown eyes, dark curls, gold-rim glasses…')}</Field>}
             <Field label={kind === 'diffusion' ? 'Instructions (put after every prompt)' : 'Custom instructions'}>{area('instructions', 5, kind === 'diffusion' ? 'high detail, no text, 16:9' : 'Always answer in under 5 sentences. Prefer Tailwind…')}</Field>
             {kind === 'diffusion' && <Field label="Negative prompt">{area('negative', 2, 'blurry, watermark, extra fingers')}</Field>}
             {kind === 'chat' && <Field label="Temperature override" hint="Leave blank to use the global setting"><input className="adm-input" type="number" step="0.05" min="0" max="2" value={p.temperature} onChange={e => upd('temperature', e.target.value)} /></Field>}
             {kind === 'chat' && <Field label="Replace built-in prompt entirely" hint="On: only your persona + instructions are sent. Off: they are added to Beryl's built-in prompt, which keeps live restyling and computer use working"><Toggle on={p.replace} onChange={v => upd('replace', v)} /></Field>}
             {kind === 'chat' && <Field label="Model file" hint="Save to GPU writes this into Ollama as a new model, so it keeps the persona even outside Crane"><pre className="adm-input" style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{modelfileText(id, p)}</pre></Field>}
+            <div className="adm-label" style={{ gridColumn: '1/-1', marginTop: '8px' }}>GALLERY MEDIA</div>
+            <div style={{ gridColumn: '1/-1' }}><MediaSlots model={id} /></div>
             <div className="adm-actions">
               <button className="adm-btn gold" onClick={() => { onSave(p); onClose(); }}>Save</button>
               {kind === 'chat' && isGpuModel(id) && <button className="adm-btn" onClick={bake}>Save to GPU model</button>}
@@ -1547,6 +1796,20 @@ function App() {
       setTimeout(() => sendRef.current(brief, {}), 250);
     });
   };
+  // Voice Studio + Gallery overlays, and the model's portfolio photo on the card.
+  const [studioOpen, setStudioOpen] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [cardSrc, setCardSrc] = useState('uploads/amanda.jpg');
+  useEffect(() => {
+    let dead = false, url = null;
+    mediaDB.list(model).then(async keys => {
+      if (dead) return;
+      if (!keys.length) { setCardSrc('uploads/amanda.jpg'); return; }
+      const blob = await mediaDB.get(keys[0]).catch(() => null);
+      if (!dead && blob) { url = URL.createObjectURL(blob); setCardSrc(url); }
+    }).catch(() => {});
+    return () => { dead = true; if (url) URL.revokeObjectURL(url); };
+  }, [model]);
   const [refImg, setRefImg] = useState(null);
   const refFileRef = useRef(null);
   const vidClips = useRef([]);
@@ -1927,7 +2190,10 @@ function App() {
         S.userName ? "The person you're talking with is " + S.userName + '.' : '', S.vernacular ? 'Speak with this vernacular in word choice and rhythm: ' + S.vernacular + '.' : '',
         spoken && cutRef.current ? 'They just talked over you while you were saying: "' + cutRef.current + '". Don\'t restart or apologize for it; respond to what they said.' : '',
         S.designStyle ? DESIGN_STUDIO + '\nActive muse: ' + S.designStyle : '',
-        S.systemExtra, prof.persona, prof.instructions, vprof.persona, vprof.instructions].filter(x => x && x.trim()).join('\n\n');
+        S.systemExtra, prof.persona, prof.instructions,
+        prof.talksLike ? 'You talk like this — match this register, rhythm and vocabulary in every setting: ' + prof.talksLike : '',
+        prof.looksLike ? 'You look like this — your appearance; describe yourself consistently whenever it comes up: ' + prof.looksLike : '',
+        vprof.persona, vprof.instructions].filter(x => x && x.trim()).join('\n\n');
       if (spoken) cutRef.current = '';
       const temp = prof.temperature !== undefined && prof.temperature !== '' ? Number(prof.temperature) : spoken ? S.voiceTemp : S.temperature;
       const call = (base, id, headers) => fetch(base.replace(/\/+$/, '') + '/chat/completions', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, tunnelHdr(base), headers || {}), body: JSON.stringify({ model: id, temperature: temp, max_tokens: S.maxTokens, messages: [{ role: 'system', content: sys }].concat(history), stream: S.stream }), signal: ac.signal });
@@ -2327,7 +2593,7 @@ function App() {
     {S.showAgent && <aside className="agent-sidebar">
 
       <div className="agent-card">
-        <img src="uploads/amanda.jpg" alt="Amanda — Voice Agent" />
+        <img src={cardSrc} alt="Amanda — Voice Agent" />
         <AvatarCanvas />
         <AvatarStatus corner />
         <div className="agent-card-overlay"></div>
@@ -2358,6 +2624,12 @@ function App() {
             </button>
             <button className={speakerOn ? 'ctrl-btn' : 'ctrl-btn active-mic'} title="Mute speaker" id="speakerBtn" onClick={toggleSpeaker}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+            </button>
+            <button className="ctrl-btn" title="Gallery — her portfolio grid" onClick={() => setGalleryOpen(true)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+            </button>
+            <button className="ctrl-btn" title="Voice Studio — voice, character, cloning" onClick={() => setStudioOpen(true)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h0a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
             </button>
             <button className="ctrl-btn" title="Share screen">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
@@ -2402,6 +2674,8 @@ function App() {
       </div>
     </div>
   )}
+  {studioOpen && <VoiceStudio S={S} set={setSetting} onClose={() => setStudioOpen(false)} />}
+  {galleryOpen && <GalleryPanel model={model} onClose={() => setGalleryOpen(false)} />}
   {profEdit && <ProfileEditor key={profEdit} id={profEdit} profile={S.profiles[profEdit]} gpuBase={S.gpuBase} onSave={p => setProfile(profEdit, p)} onClose={() => setProfEdit(null)} />}
   {adminOpen && <AdminPanel s={S} set={setSetting} onEditProfile={setProfEdit} onClose={() => setAdminOpen(false)} models={models} online={online} onTest={refreshModels}
     onClearChat={() => setMsgs([])} onResetPatches={() => setPatches([])} voiceErr={voiceErr} />}
