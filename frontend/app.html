@@ -1779,10 +1779,18 @@ function App() {
   const [activeProjectId, setActiveProjectId] = useState(getActiveId);
   const [tab, setTab] = useState(() => loadSettings().defaultTab);
   const [micOn, setMicOn] = useState(false);
+  // Composer mic (dictation into the textarea) is independent of the agent call.
+  const [talkOn, setTalkOn] = useState(false);
+  const talkRef = useRef(null);
+  const talkBase = useRef('');
+  const draftRef = useRef('');
   const [speakerOn, setSpeakerOn] = useState(true);
   const [voiceState, setVoiceState] = useState('idle');
   const [msgs, setMsgs] = useState(INITIAL_MSGS);
   const [draft, setDraft] = useState('');
+  // draftRef mirrors draft so the composer mic can read the box at press-time
+  // without re-creating its recognizer. Declared after `draft` (TDZ).
+  useEffect(() => { draftRef.current = draft; }, [draft]);
   // Composer attachments (drag-and-drop, paste, or the paperclip) and dictation.
   const [att, setAtt] = useState([]);
   const [dragOver, setDragOver] = useState(false);
@@ -2159,6 +2167,26 @@ function App() {
     setMsgs(ms => ms.map((x, j) => j === i ? { ...x, js: '', steps: (x.steps || []).concat([[err ? '✕' : '✓', err ? 'Error: ' + err : 'Feature code ran', err ? '#ef4444' : '#a1a1aa']]) } : x));
   };
 
+  // ── Crane Hands (computer use) ────────────────────────────────────────────
+  // The agent sidecar runs on the user's PC (scripts/crane_hands.py, :8765) and is
+  // NOT started by this page. Probe it so the composer can say plainly whether
+  // computer control is live, instead of the user discovering it when a request
+  // silently fails to run.
+  const [cuState, setCuState] = useState('off');
+  useEffect(() => {
+    if (!S.cuEnabled || !S.cuUrl) { setCuState('off'); return; }
+    let alive = true;
+    const probe = () => {
+      fetch((S.cuUrl || '').replace(/\/+$/, '') + '/health', { headers: { 'X-Crane-Token': S.cuToken || '' } })
+        .then(r => { if (alive) setCuState(r.ok ? 'on' : 'auth'); })
+        .catch(() => { if (alive) setCuState('down'); });
+    };
+    probe();
+    const t = setInterval(probe, 15000);
+    return () => { alive = false; clearInterval(t); };
+  }, [S.cuEnabled, S.cuUrl, S.cuToken]);
+  const cuMsg = { off: 'Computer control off', on: 'Crane Hands live', auth: 'Crane Hands rejected the token — Settings → Computer', down: 'Crane Hands is not running — start it from the desktop icon' };
+
   const runComputer = async (i, actions) => {
     const acts = actions || msgs[i].cu;
     const note = (steps, shot) => setMsgs(ms => { const c = ms.slice(); const k = i == null ? c.length - 1 : i; c[k] = { ...c[k], cu: null, shot: shot || c[k].shot, steps: (c[k].steps || []).concat(steps) }; return c; });
@@ -2177,7 +2205,7 @@ function App() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
       note(j.results.map(x => [x.ok ? '✓' : '✕', x.msg, x.ok ? '#a1a1aa' : '#ef4444']), j.screenshot);
-    } catch (e) { note([['✕', 'Computer agent: ' + e.message + ' — is Crane Hands running? (desktop icon starts it)', '#ef4444']]); }
+    } catch (e) { note([['✕', 'Computer agent: ' + e.message + ' — is Crane Hands running? (desktop icon starts it)', '#ef4444']]); setCuState('down'); }
   };
 
   const greet = () => {
@@ -2247,6 +2275,35 @@ function App() {
     }
   };
   const toggleMic = () => { if (liveRef.current) stopLive(); else startLive(); };
+  // The composer mic is its own control: push-to-talk dictation straight into the
+  // textarea. It shares nothing with the agent call on the right — no shared
+  // micOn, no shared recogniser, no shared error state — so you can dictate a
+  // prompt without opening a call, and the call stays live if it already is.
+  const toggleTalk = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (talkRef.current) { try { talkRef.current.stop(); } catch (e) {} return; }
+    if (!SR) { setVoiceErr('The composer mic needs Chrome or Edge — this browser has no speech recognition.'); return; }
+    const r = new SR();
+    r.continuous = true; r.interimResults = true; r.lang = DICT_LANGS[S.listenLang] || 'en-US';
+    const base = draftRef.current || '';
+    r.onresult = (e) => {
+      let finals = '', interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finals += t; else interim += t;
+      }
+      if (finals) {
+        const add = finals.trim();
+        setDraft(d => (d && !/\s$/.test(d) ? d + ' ' : d) + add + ' ');
+        talkBase.current = talkBase.current + (talkBase.current && !/\s$/.test(talkBase.current) ? ' ' : '') + add + ' ';
+      } else if (interim) setDraft(talkBase.current + interim);
+    };
+    r.onerror = (e) => { setVoiceErr(e.error === 'not-allowed' ? 'Microphone blocked: allow it in the address bar' : 'Composer mic: ' + e.error); talkRef.current = null; setTalkOn(false); };
+    r.onend = () => { talkRef.current = null; setTalkOn(false); };
+    talkRef.current = r;
+    talkBase.current = base;
+    try { r.start(); setTalkOn(true); setVoiceErr(''); } catch (e) { talkRef.current = null; }
+  };
   const toggleSpeaker = () => { const on = !speakerOn; setSpeakerOn(on); if (!on) VoiceOut.stop(); };
   const endCall = () => stopLive();
   useEffect(() => { if (S.liveGreet) startLive(); return () => { liveRef.current = false; }; }, []);
@@ -2352,6 +2409,32 @@ function App() {
     const chunker = talking ? makeChunker(t => { if (!ac.signal.aborted) VoiceOut.speak(t, sref.current).catch(() => {}); }) : null;
     let out = '';
     const setLast = (t, error, extra) => setMsgs(m => { const c = m.slice(); c[c.length - 1] = { ...c[c.length - 1], text: t, error, ...extra }; return c; });
+    // Natural memory recall: her long-term mind (memory server, :8092) surfaces
+    // what is emotionally and associatively linked to this moment. Declared out here
+    // because the system prompt below reads it — a `let` inside the try would be a
+    // temporal dead zone and every send would fail. Fail silent, live human.
+    let memoryNote = '';
+    if (!opts.depth) {
+      try {
+        const rmem = await fetch((S.memoryUrl || 'http://127.0.0.1:8092').replace(/\/+$/, '') + '/recall', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ context: (text + ' ' + msgs.slice(-6).map(m => m.text).join(' ')).slice(0, 3000) }) });
+        if (rmem.ok) {
+          const jm = await rmem.json();
+          if (jm.surfaces && jm.surfaces.length) memoryNote = 'MEMORIES DRIFTING UP — these surfaced from your long-term memory. Feel them; weave them in naturally only if they belong in this moment. Never list them mechanically.\n' + jm.surfaces.map(s => '- ' + s.text + (s.emotion ? ' [' + s.emotion + ']' : '')).join('\n');
+          if (jm.mood) memoryNote += '\nYour emotional weather right now: valence ' + Number(jm.mood.valence || 0).toFixed(2) + ', arousal ' + Number(jm.mood.arousal || 0).toFixed(2) + '. Let it shade your tone the way a real mood would — without announcing it.';
+        }
+      } catch (e) {}
+    }
+    // Routing facts are resolved BEFORE the try: the catch block names the endpoint
+    // that failed, so these must be in scope there and not trapped inside the try.
+    const nvidiaListEnt = nvidiaModels(S.nvidiaEnterpriseModels);
+    const nvidia = nvidiaList.some(n => n.id === model);
+    const nvidiaEnt = nvidiaListEnt.some(n => n.id === model);
+    // Amanda is the pinned local persona and must never depend on discovery having
+    // succeeded — if /models was blocked or empty she would otherwise fall through
+    // to the GPU default and fail there instead of on the endpoint that has her.
+    const onCpu = cpuModels.includes(model) || model === DEFAULT_LOCAL_MODEL;
+    const onMini = miniModels.includes(model);
+    const onHfGpu = hfGpuModels.includes(model);
     try {
       if (HF_DIFFUSION_MODELS.some(d => d.id === model)) throw new Error(short(model) + ' is a diffusion model — use the prompt box in the center panel, or pick a chat model');
       const prof = S.profiles[model] || {};
@@ -2360,7 +2443,10 @@ function App() {
       const sys = [prof.replace ? '' : SYSTEM.replace('MODEL_NAME', short(model)).replace(/Beryl/g, S.agentName), prof.replace ? '' : PERSONA, spoken ? VOICE_RULES : '',
         S.userName ? "The person you're talking with is " + S.userName + '.' : '', S.vernacular ? 'Speak with this vernacular in word choice and rhythm: ' + S.vernacular + '.' : '',
         spoken && cutRef.current ? 'They just talked over you while you were saying: "' + cutRef.current + '". Don\'t restart or apologize for it; respond to what they said.' : '',
-        S.designStyle ? DESIGN_STUDIO + '\nActive muse: ' + S.designStyle : '',
+        // The design rules apply to anything that builds a page, not only when
+        // someone remembers to type /design. Without this a small model falls
+        // straight into Arial-on-grey, which is what the preview looked like.
+        (!prof.replace && !spoken && S.designStyle !== 'off') ? DESIGN_STUDIO + (S.designStyle ? '\nActive muse: ' + S.designStyle : '') : '',
         S.systemExtra, prof.persona, prof.instructions,
         prof.talksLike ? 'You talk like this — match this register, rhythm and vocabulary in every setting: ' + prof.talksLike : '',
         prof.looksLike ? 'You look like this — your appearance; describe yourself consistently whenever it comes up: ' + prof.looksLike : '',
@@ -2368,31 +2454,11 @@ function App() {
         vprof.persona, vprof.instructions].filter(x => x && x.trim()).join('\n\n');
       if (spoken) cutRef.current = '';
       const temp = prof.temperature !== undefined && prof.temperature !== '' ? Number(prof.temperature) : spoken ? S.voiceTemp : S.temperature;
-      // Natural memory recall: her long-term mind (memory server, :8092) surfaces
-      // what is emotionally and associatively linked to this moment — never a
-      // keyword dump. Fail silent, live human.
-      let memoryNote = '';
-      if (!opts.depth) {
-        try {
-          const rmem = await fetch((S.memoryUrl || 'http://127.0.0.1:8092').replace(/\/+$/, '') + '/recall', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ context: (text + ' ' + msgs.slice(-6).map(m => m.text).join(' ')).slice(0, 3000) }) });
-          if (rmem.ok) {
-            const jm = await rmem.json();
-            if (jm.surfaces && jm.surfaces.length) memoryNote = 'MEMORIES DRIFTING UP — these surfaced from your long-term memory. Feel them; weave them in naturally only if they belong in this moment. Never list them mechanically.\n' + jm.surfaces.map(s => '- ' + s.text + (s.emotion ? ' [' + s.emotion + ']' : '')).join('\n');
-            if (jm.mood) memoryNote += '\nYour emotional weather right now: valence ' + Number(jm.mood.valence || 0).toFixed(2) + ', arousal ' + Number(jm.mood.arousal || 0).toFixed(2) + '. Let it shade your tone the way a real mood would — without announcing it.';
-          }
-        } catch (e) {}
-      }
       const call = (base, id, headers) => fetch(base.replace(/\/+$/, '') + '/chat/completions', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, tunnelHdr(base), headers || {}), body: JSON.stringify({ model: id, temperature: temp, max_tokens: S.maxTokens, messages: [{ role: 'system', content: sys }].concat(history), stream: S.stream }), signal: ac.signal });
       // Route on where the model actually lives: NVIDIA cloud (NIM or Enterprise),
       // a provider API, the CPU-only llama-server for small models, or the CUDA
       // one for everything else. No silent cross-cloud fallback - if the chosen
       // backend is down the send fails and names the endpoint.
-      const nvidia = nvidiaList.some(n => n.id === model);
-      const onCpu = cpuModels.includes(model);
-      const onMini = miniModels.includes(model);
-      const onHfGpu = hfGpuModels.includes(model);
-      const nvidiaListEnt = nvidiaModels(S.nvidiaEnterpriseModels);
-      const nvidiaEnt = nvidiaListEnt.some(n => n.id === model);
       const provider = (model.split('/')[0]).toLowerCase();
       const providerBases = {
         anthropic: 'https://api.anthropic.com/v1',
@@ -2498,14 +2564,14 @@ function App() {
     } catch (e) {
       if (e.name === 'AbortError') { setLast(out ? out.replace(/```[\s\S]*?(```|$)/g, '').trim() + ' …' : '(interrupted)', false, { raw: out || undefined }); busyRef.current = false; setBusy(false); return; }
       setOnline(false);
-      const who = nvidia ? 'NVIDIA (' + NVIDIA_BASE + ')' : onMini ? 'Amanda Mini at ' + S.miniBase : cpuModels.includes(model) ? 'the CPU endpoint at ' + S.cpuBase : 'your local model server at ' + S.gpuBase;
+      const who = nvidia ? 'NVIDIA (' + NVIDIA_BASE + ')' : onMini ? 'Amanda Mini at ' + S.miniBase : onCpu ? 'the CPU endpoint at ' + S.cpuBase : 'your local model server at ' + S.gpuBase;
       setLast("Couldn't reach " + who + " (" + e.message + "). For local models start the proxy (scripts/cors_proxy.py) and make sure the tunnel to the GPU VM is up. Open this page at https://aibruh-crane-builder-v1.static.hf.space, not inside huggingface.co.", true);
     }
     busyRef.current = false; setBusy(false);
   };
   sendRef.current = sendMsg;
 
-  const micStyle = micOn ? { background:'#eeca50', color:'#1a1204', borderColor:'rgba(255,236,170,.6)' } : {};
+  const micStyle = talkOn ? { background:'#eeca50', color:'#1a1204', borderColor:'rgba(255,236,170,.6)' } : {};
   const vstate = voiceErr ? 'voice offline' : speaking ? 'speaking' : !speakerOn ? 'speaker-off' : busy && micOn ? 'thinking' : micOn ? 'listening' : 'idle';
   const voiceLabelText = (VOICE_LABELS[vstate] || vstate.toUpperCase());
   const voiceLabelStyle = vstate === 'idle' ? {} : { color: voiceErr ? '#ef4444' : 'var(--gold)' };
@@ -2571,7 +2637,7 @@ function App() {
       </div>
 
       <div className="composer-wrap">
-        <div className={dragOver ? 'composer drag-over' : 'composer'} id="composer" style={micOn ? {borderColor:'rgba(238,202,80,.5)'} : {}}
+        <div className={dragOver ? 'composer drag-over' : 'composer'} id="composer" style={talkOn ? {borderColor:'rgba(238,202,80,.5)'} : {}}
           onDragOver={e => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={e => { if (e.currentTarget === e.target) setDragOver(false); }}
           onDrop={e => { e.preventDefault(); setDragOver(false); readImageFiles(e.dataTransfer.files); }}>
@@ -2587,6 +2653,7 @@ function App() {
           ) : null}
           <textarea id="draftInput" rows="2" placeholder="Describe it, or tap the mic and just say it…" value={draft} onChange={e => setDraft(e.target.value)} onPaste={e => { if (e.clipboardData && e.clipboardData.files && e.clipboardData.files.length) { e.preventDefault(); readImageFiles(e.clipboardData.files); } }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } }}></textarea>
           <div className="composer-row">
+            {S.cuEnabled ? <span className="mtag" style={{color: cuState === 'on' ? '#34d399' : cuState === 'off' ? '#71717a' : '#fca5a5', alignSelf:'center', marginRight:'4px'}} title={cuMsg[cuState]}>{cuMsg[cuState]}</span> : null}
             <input ref={fileRef} type="file" accept="image/*" multiple style={{display:'none'}} onChange={e => { readImageFiles(e.target.files); e.target.value = ''; }} />
             <button className="tool-btn" title="Attach images" onClick={() => fileRef.current && fileRef.current.click()}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>
@@ -2689,7 +2756,7 @@ function App() {
             <button className="tool-btn" title="Dictate — speech to text in the composer" onClick={toggleDict} style={dictating ? {color:'var(--gold)', borderColor:'rgba(238,202,80,.6)'} : null}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg>
             </button>
-            <button className="btn-mic" id="micBtn" title="Voice" onClick={toggleMic} style={micStyle}>
+            <button className="btn-mic" id="micBtn" title="Dictate into the chat box" onClick={toggleTalk} style={micStyle}>
               <MicIcon />
             </button>
             <button className="btn-send" title="Send" onClick={() => sendMsg()}>

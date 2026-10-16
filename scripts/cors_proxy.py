@@ -24,7 +24,13 @@ UPSTREAMS = {"11435": ("127.0.0.1", 11434), "11438": ("127.0.0.1", 11437), "1143
 LISTEN = ("127.0.0.1", 11435)
 LISTEN_CPU = ("127.0.0.1", 11438)
 LISTEN_MINI = ("127.0.0.1", 11439)
-ALLOWED = ('https://aibruh-crane-builder-v1.static.hf.space', 'https://aibruh-crane-builder-v1.hf.space', 'https://huggingface.co')
+ALLOWED = ('https://aibruh-crane-builder-v1.static.hf.space', 'https://aibruh-crane-builder-v1.hf.space', 'https://huggingface.co',
+           # Loopback origins: running the builder straight off this PC
+           # (http://localhost:<port>/app.html or a file:// page) is a normal way to
+           # develop it. These bind to 127.0.0.1 only and cannot be reached from the
+           # internet, so allowing them does not widen the proxy's exposure.
+           'http://localhost:8080', 'http://127.0.0.1:8080', 'null',
+           'http://localhost:5173', 'http://localhost:3000', 'http://localhost:8000')
 
 
 class Handler(BaseHTTPRequestHandler):
