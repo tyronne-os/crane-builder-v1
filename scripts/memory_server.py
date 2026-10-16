@@ -261,8 +261,10 @@ def neo4j_mirror(graph):
 
 def rclone_backup():
     import subprocess
+    rbin = os.path.expanduser("~/bin/rclone")
+    rbin = rbin if os.path.exists(rbin) else "rclone"
     try:
-        subprocess.run(["rclone", "sync", VAULT, "gdrive:AMANDA — MEMORY", "--create-empty-src-dirs"],
+        subprocess.run([rbin, "sync", VAULT, "gdrive:AMANDA — MEMORY", "--create-empty-src-dirs"],
                        check=True, timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return True
     except Exception:
