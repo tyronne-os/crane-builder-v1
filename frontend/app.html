@@ -2653,7 +2653,7 @@ function App() {
           ) : null}
           <textarea id="draftInput" rows="2" placeholder="Describe it, or tap the mic and just say it…" value={draft} onChange={e => setDraft(e.target.value)} onPaste={e => { if (e.clipboardData && e.clipboardData.files && e.clipboardData.files.length) { e.preventDefault(); readImageFiles(e.clipboardData.files); } }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } }}></textarea>
           <div className="composer-row">
-            {S.cuEnabled ? <span className="mtag" style={{color: cuState === 'on' ? '#34d399' : cuState === 'off' ? '#71717a' : '#fca5a5', alignSelf:'center', marginRight:'4px'}} title={cuMsg[cuState]}>{cuMsg[cuState]}</span> : null}
+            {S.cuEnabled && S.cuToken ? <span className="mtag" style={{color: cuState === 'on' ? '#34d399' : cuState === 'off' ? '#71717a' : '#fca5a5', alignSelf:'center', marginRight:'4px'}} title={cuMsg[cuState]}>{cuMsg[cuState]}</span> : null}
             <input ref={fileRef} type="file" accept="image/*" multiple style={{display:'none'}} onChange={e => { readImageFiles(e.target.files); e.target.value = ''; }} />
             <button className="tool-btn" title="Attach images" onClick={() => fileRef.current && fileRef.current.click()}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>
