@@ -1852,11 +1852,14 @@ function App() {
       {centerMode === 'builder' && (
         <div className="preview-frame">
           {tab === 'preview' ? (
-            <iframe
-              title="Crane Live Preview"
-              style={{width:'100%',height:'100%',border:0,background:'#fff'}}
-              src="http://localhost:11438/"
-            />
+            <div className="idle-state" id="idlePane">
+              <div className="idle-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+              </div>
+              <div className="idle-title">No active build</div>
+              <div className="idle-sub">Describe your project in the chat or tap the mic. The preview will appear here as Beryl builds it.</div>
+              <div className="idle-pulse"></div>
+            </div>
           ) : <CodePane />}
         </div>
       )}
