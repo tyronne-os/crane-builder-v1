@@ -17,6 +17,9 @@ start() { # name, port, command
 # 1. Amanda herself — Qwen 1.5B abliterated on CPU, the composer default
 start "Amanda (model)" 11437 bash /home/trell/staff-build/start-amanda.sh
 
+# 1b. Amanda Mini — gemma-1B heretic-extreme-uncensored, her light twin
+start "Amanda Mini" 11440 /home/trell/llama.cpp/build/bin/llama-server -m "/home/trell/THE STAFF/uncensored/gemma-3-1b-it-heretic-extreme-uncensored-abliterated.Q4_K_M.gguf" --alias Amanda-Mini --port 11440 --ctx-size 4096
+
 # 2. CORS proxy — browser port 11438 → her 11437
 if ! up 11438; then
   nohup python3 /home/trell/crane-builder-v1/scripts/cors_proxy.py > /tmp/amanda-stack-11438.log 2>&1 &

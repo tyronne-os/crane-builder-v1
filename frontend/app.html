@@ -562,6 +562,9 @@ const VOICE_LABELS = { listening:'LISTENING', muted:'MUTED', speaking:'SPEAKING'
 // browser port 11438 to it). Overridable with ?model= or Settings; refreshModels()
 // snaps to something real if she is not running.
 const DEFAULT_LOCAL_MODEL = 'Amanda-Qwen-1.5B';
+// Her little sister — gemma-1B heretic-extreme-uncensored, Q4_K_M (~810 MB).
+// Served on CPU port 11440, proxied to the browser on 11439.
+const AMANDA_MINI = 'Amanda-Mini';
 // Her id back when the CPU server spoke Ollama — kept so a saved persona migrates over.
 const LEGACY_AMANDA_ID = 'hf.co/mradermacher/Qwen2.5-Coder-1.5B-Instruct-abliterated-i1-GGUF:Q4_K_M';
 const AMANDA_PERSONA = [
@@ -958,7 +961,7 @@ const DEFAULT_SETTINGS = {
   agentName: 'Amanda', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'kokoro', voice: 'sarah', voiceSpeed: 1.0, ttsUrl: 'http://127.0.0.1:8090/v1', ttsGpuUrl: 'http://127.0.0.1:8090/v1', autoSpeak: true, micMode: 'toggle', sttSource: 'browser',
   userName: '', vernacular: '', liveGreet: true, bargeIn: true, avatarOn: true, webResearch: true, listenLang: 'English', berylUrl: 'http://127.0.0.1:8882/v1', voiceTemp: 0.8, voiceV: 2, voiceFx: {},
   nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU',
-  registryUrl: 'http://localhost:11436/v1', cpuBase: 'http://localhost:11438/v1', nvidiaModels: ['zai-org/glm-4.5-air', 'zai-org/glm-4.5'], nvidiaKey: '', nvidiaEnterpriseKey: '', nvidiaEnterpriseModels: [],
+  registryUrl: 'http://localhost:11436/v1', cpuBase: 'http://localhost:11438/v1', miniBase: 'http://localhost:11439/v1', nvidiaModels: ['zai-org/glm-4.5-air', 'zai-org/glm-4.5'], nvidiaKey: '', nvidiaEnterpriseKey: '', nvidiaEnterpriseModels: [],
   providers: { 
     anthropic: '', 'openrouter': '', 'huggingface': '', 'google': '', 'meta-muse': '',
     claude: '', 'gemini': '', 'openai': '',
@@ -1847,6 +1850,7 @@ function App() {
   const [model, setModel] = useState(CFG.model);
   const [models, setModels] = useState([]);
   const [cpuModels, setCpuModels] = useState([]);
+  const [miniModels, setMiniModels] = useState([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [online, setOnline] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -1959,14 +1963,16 @@ function App() {
   // interchangeable. `gpu` is the CUDA llama-server on 11434, `cpu` is the
   // CPU-only one on 11437 for small models. Both speak /v1/chat/completions, so
   // routing is decided by which list the model came from, not by hardcoding.
-  const apply = (entries, extraCpu) => {
+  const apply = (entries, extraCpu, extraMini) => {
     const list = (entries || []).map(m => (typeof m === 'string' ? { id: m } : m));
-    const gpuIds = [], cpuIds = [];
-    list.forEach(m => { const c = m.crane || {}; (c.source === 'cpu' ? cpuIds : gpuIds).push(m.id); });
+    const gpuIds = [], cpuIds = [], miniIds = [];
+    list.forEach(m => { const c = m.crane || {}; if (c.source === 'cpu') cpuIds.push(m.id); else if (c.source === 'mini') miniIds.push(m.id); else gpuIds.push(m.id); });
     (extraCpu || []).forEach(id => { if (!cpuIds.includes(id) && !gpuIds.includes(id)) cpuIds.push(id); });
-    setOnline(gpuIds.length + cpuIds.length > 0);
+    (extraMini || []).forEach(id => { if (!miniIds.includes(id) && !cpuIds.includes(id) && !gpuIds.includes(id)) miniIds.push(id); });
+    setOnline(gpuIds.length + cpuIds.length + miniIds.length > 0);
     setModels(gpuIds);
     setCpuModels(cpuIds);
+    setMiniModels(miniIds);
     setModel(cur => {
       if (S.defaultModel && (gpuIds.includes(S.defaultModel) || cpuIds.includes(S.defaultModel))) return S.defaultModel;
       if (gpuIds.includes(cur) || cpuIds.includes(cur)) return cur;   // keeps a CPU or NVIDIA pick
@@ -1986,12 +1992,15 @@ function App() {
     const localCpu = fetchModels(S.cpuBase, '/models')
       .then(j => (j.data || []).map(m => (typeof m === 'string' ? m : m.id)))
       .catch(() => []);
-    const merged = j => localCpu.then(extra => apply(j.data, extra));
+    const localMini = fetchModels(S.miniBase, '/models')
+      .then(j => (j.data || []).map(m => (typeof m === 'string' ? m : m.id)))
+      .catch(() => []);
+    const merged = j => localCpu.then(extra => localMini.then(mn => apply(j.data, extra, mn)));
     fetchModels(S.registryUrl, '/models').then(merged)
       .catch(() => fetchModels(S.gpuBase, '/models').then(merged))
-      .catch(() => localCpu.then(extra => apply(extra.map(id => ({ id })))));
+      .catch(() => Promise.all([localCpu, localMini]).then(([extra, mn]) => apply(extra.map(id => ({ id })), null, mn)));
   };
-  useEffect(() => { refreshModels(); }, [S.gpuBase, S.registryUrl, S.cpuBase]);
+  useEffect(() => { refreshModels(); }, [S.gpuBase, S.registryUrl, S.cpuBase, S.miniBase]);
   // One-time: carry Amanda's saved persona over from her old Ollama-style id to the
   // llama.cpp alias; if none was saved, seed her persona so she arrives fully formed.
   useEffect(() => {
@@ -1999,6 +2008,7 @@ function App() {
       const legacy = S.profiles[LEGACY_AMANDA_ID];
       setSetting('profiles', { ...S.profiles, [DEFAULT_LOCAL_MODEL]: legacy || { persona: AMANDA_PERSONA } });
     }
+    if (!S.profiles[AMANDA_MINI]) setSetting('profiles', { ...S.profiles, [AMANDA_MINI]: S.profiles[DEFAULT_LOCAL_MODEL] || { persona: AMANDA_PERSONA } });
   }, []);
   // When a NVIDIA key is present, pull the live NIM catalog so the dropdown shows
   // everything the key unlocks — the full model sea, not a hand-typed list.
@@ -2342,6 +2352,7 @@ function App() {
       // backend is down the send fails and names the endpoint.
       const nvidia = nvidiaList.some(n => n.id === model);
       const onCpu = cpuModels.includes(model);
+      const onMini = miniModels.includes(model);
       const nvidiaListEnt = nvidiaModels(S.nvidiaEnterpriseModels);
       const nvidiaEnt = nvidiaListEnt.some(n => n.id === model);
       const provider = (model.split('/')[0]).toLowerCase();
@@ -2357,7 +2368,7 @@ function App() {
         openai: 'https://api.openai.com/v1'
       };
       const provBase = providerBases[provider];
-      const target = nvidia || nvidiaEnt ? NVIDIA_BASE : provBase ? provBase : onCpu ? S.cpuBase : S.gpuBase;
+      const target = nvidia || nvidiaEnt ? NVIDIA_BASE : provBase ? provBase : onMini ? S.miniBase : onCpu ? S.cpuBase : S.gpuBase;
       let headers = {};
       if (nvidiaEnt) {
         if (!S.nvidiaEnterpriseKey) throw new Error('NVIDIA Enterprise API key not set. Open Settings → NVIDIA Enterprise API key');
@@ -2444,7 +2455,7 @@ function App() {
     } catch (e) {
       if (e.name === 'AbortError') { setLast(out ? out.replace(/```[\s\S]*?(```|$)/g, '').trim() + ' …' : '(interrupted)', false, { raw: out || undefined }); busyRef.current = false; setBusy(false); return; }
       setOnline(false);
-      const who = nvidia ? 'NVIDIA (' + NVIDIA_BASE + ')' : cpuModels.includes(model) ? 'the CPU endpoint at ' + S.cpuBase : 'your local model server at ' + S.gpuBase;
+      const who = nvidia ? 'NVIDIA (' + NVIDIA_BASE + ')' : onMini ? 'Amanda Mini at ' + S.miniBase : cpuModels.includes(model) ? 'the CPU endpoint at ' + S.cpuBase : 'your local model server at ' + S.gpuBase;
       setLast("Couldn't reach " + who + " (" + e.message + "). For local models start the proxy (scripts/cors_proxy.py) and make sure the tunnel to the GPU VM is up. Open this page at https://aibruh-crane-builder-v1.static.hf.space, not inside huggingface.co.", true);
     }
     busyRef.current = false; setBusy(false);
@@ -2481,7 +2492,7 @@ function App() {
     </div>
     {S.showStatus && <div className="status-pill">
       <span className="status-dot" style={online === true ? {} : { background: 'var(--fg-5)', animation: 'none' }}></span>
-      {model === DEFAULT_LOCAL_MODEL ? 'AMANDA' : short(model)} · {S.nodeName}
+      {model === DEFAULT_LOCAL_MODEL ? 'AMANDA' : model === AMANDA_MINI ? 'AMANDA MINI' : short(model)} · {S.nodeName}
     </div>}
     {S.showStatus && <div className="status-pill" style={{cursor:'pointer'}} title={'GPU session meter — auto-on with diffusion models. Pure bookkeeping; nothing leaves this browser.'} onClick={() => setGpuMeter(m => ({ ...m, on: !m.on }))}>
       <span className="status-dot" style={gpuMeter.on ? {} : { background: 'var(--fg-5)', animation: 'none' }}></span>
@@ -2546,13 +2557,14 @@ function App() {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
             </button>
             <div style={{ position: 'relative' }}>
-              <button className="model-chip" onClick={() => { if (!menuOpen) { refreshModels(); loadOpencode(); } setMenuOpen(o => !o); }}>{model === DEFAULT_LOCAL_MODEL ? 'AMANDA' : short(model)}
+              <button className="model-chip" onClick={() => { if (!menuOpen) { refreshModels(); loadOpencode(); } setMenuOpen(o => !o); }}>{model === DEFAULT_LOCAL_MODEL ? 'AMANDA' : model === AMANDA_MINI ? 'AMANDA MINI' : short(model)}
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>
               </button>
               {menuOpen && (
                 <div style={{ position: 'absolute', bottom: '34px', left: 0, minWidth: '240px', maxHeight: '62vh', overflowY: 'auto', background: 'var(--surface2)', border: '1px solid var(--border-mid)', borderRadius: '10px', padding: '4px', zIndex: 10, boxShadow: '0 10px 30px rgba(0,0,0,.5)' }}>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>PINNED · YOUR CO-FOUNDER</div>
                   <ModelRow key={DEFAULT_LOCAL_MODEL} id={DEFAULT_LOCAL_MODEL} label="Amanda" tag="ALWAYS READY" tagColor="#eeca50" active={model === DEFAULT_LOCAL_MODEL} hasProfile={!!S.profiles[DEFAULT_LOCAL_MODEL]} onPick={() => { setModel(DEFAULT_LOCAL_MODEL); if (S.autoSwitch) setCenterMode('builder'); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />
+                  <ModelRow key={AMANDA_MINI} id={AMANDA_MINI} label="Amanda Mini" tag={miniModels.includes(AMANDA_MINI) ? 'ALWAYS READY' : 'OFFLINE'} tagColor={miniModels.includes(AMANDA_MINI) ? '#22d3ee' : '#71717a'} active={model === AMANDA_MINI} hasProfile={!!S.profiles[AMANDA_MINI]} onPick={() => { setModel(AMANDA_MINI); if (S.autoSwitch) setCenterMode('builder'); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>STORED IN GPU · {S.nodeName.toUpperCase()}</div>
                   {models.length ? models.map(id => <ModelRow key={id} id={id} label={short(id)} tag="LOCAL" tagColor="#34d399" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>none found — start the GPU, then the tunnel</div>}

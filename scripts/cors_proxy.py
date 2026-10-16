@@ -11,6 +11,7 @@ raw tunnel ports stay free for other tools.
 
     11435 -> VM:11434   GPU  (CUDA llama-server)     <- the browser's gpuBase
     11438 -> VM:11437   CPU  (CPU-only llama-server) <- the browser's cpuBase
+    11439 ->      11440  Amanda Mini (heretic gemma-1B llama-server)
 
 Note 11438, not 11437: the tunnel already forwards 11437, so listening there
 would collide with it and self-loop.
@@ -19,9 +20,10 @@ import http.client
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-UPSTREAMS = {"11435": ("127.0.0.1", 11434), "11438": ("127.0.0.1", 11437)}
+UPSTREAMS = {"11435": ("127.0.0.1", 11434), "11438": ("127.0.0.1", 11437), "11439": ("127.0.0.1", 11440)}
 LISTEN = ("127.0.0.1", 11435)
 LISTEN_CPU = ("127.0.0.1", 11438)
+LISTEN_MINI = ("127.0.0.1", 11439)
 ALLOWED = ('https://aibruh-crane-builder-v1.static.hf.space', 'https://aibruh-crane-builder-v1.hf.space', 'https://huggingface.co')
 
 
@@ -86,12 +88,13 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     servers = []
-    for listen in (LISTEN, LISTEN_CPU):
+    for listen in (LISTEN, LISTEN_CPU, LISTEN_MINI):
         s = ThreadingHTTPServer(listen, Handler)
         servers.append(s)
         print('Crane Builder proxy: http://%s:%d -> http://%s:%d'
               % (listen + UPSTREAMS[str(listen[1])]), flush=True)
-    # First server owns the main loop; the second is served on its own thread.
-    threading.Thread(target=servers[1].serve_forever, daemon=True).start()
+    # First server owns the main loop; the rest serve on their own threads.
+    for s in servers[1:]:
+        threading.Thread(target=s.serve_forever, daemon=True).start()
     print('  registry: http://127.0.0.1:11436/v1/models (forwarded by the tunnel)', flush=True)
     servers[0].serve_forever()
