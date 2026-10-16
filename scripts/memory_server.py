@@ -38,6 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = 8092
 DESKTOP_CANDIDATES = [
+    "/mnt/c/Users/chant/OneDrive/Desktop",
     "/mnt/c/Users/chant/Desktop",
     os.path.expanduser("~/Desktop"),
     os.path.expanduser("~"),
