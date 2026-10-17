@@ -1836,10 +1836,10 @@ function AvatarCanvas({ S }) {
         // a viseme mouth over her photo. Energy opens, treble widens, bass rounds.
         const f = VoiceOut.features();
         const st = S || {};
-        if (f.speaking && f.energy > 0.015) {
+        if (f.speaking && f.energy > 0.006) {
           const mx = (st.mouthX || 50) / 100 * w, my = (st.mouthY || 63) / 100 * h;
           const base = (st.mouthW || 11) / 100 * w;
-          const openness = Math.max(0.12, Math.min(1, f.energy * 1.5));
+          const openness = Math.max(0.14, Math.min(1, f.energy * 2.1));
           const wideness = 0.72 + (f.high || 0) * 0.55;
           const mw = base * wideness, mh = base * openness * 0.62;
           // soft inner mouth
