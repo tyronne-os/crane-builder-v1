@@ -791,12 +791,25 @@ const VoiceOut = (() => {
       const src = ctx.createBufferSource(); src.buffer = buf; src.detune.value = it.fx.pitch; src.connect(n.low);
       said = said.concat(it.text).slice(-3); setSpeaking(true);
       await new Promise(res => { src.onended = res; cur = src; src.start(); AvatarLink.play(it.uid, ctx.currentTime); });
-      cur = null; AvatarLink.play(null);
-      if (queue.length) await new Promise(r => setTimeout(r, 60 + Math.random() * 120));
+      cur = null; AvatarLink.play(null);      if (queue.length) await new Promise(r => setTimeout(r, 60 + Math.random() * 120));
     }
     pumping = false; setSpeaking(false);
   };
   return {
+    // Real-time audio features for the talking portrait: what her voice looks
+    // like as it plays — energy opens the mouth, treble widens it, bass rounds it.
+    features() {
+      if (!n || !n.analyser) return { speaking: speaking, energy: 0, low: 0, high: 0 };
+      try {
+        const freq = new Uint8Array(n.analyser.frequencyBinCount);
+        n.analyser.getByteFrequencyData(freq);
+        let low = 0, high = 0, total = 0;
+        const third = Math.floor(freq.length / 3);
+        for (let i = 0; i < freq.length; i++) { total += freq[i]; if (i < third) low += freq[i]; else if (i >= third * 2) high += freq[i]; }
+        const energy = Math.min(1, (total / freq.length) / 90);
+        return { speaking: speaking, energy: energy, low: total ? low / total : 0, high: total ? high / total : 0 };
+      } catch (e) { return { speaking: speaking, energy: 0, low: 0, high: 0 }; }
+    },
     speak(text, S) {
       graph();
       const fx = fxFor(S);
@@ -964,7 +977,7 @@ const DEFAULT_SETTINGS = {
   projectName: 'crane-it', defaultTab: 'preview', showStatus: true, shipTarget: 'hf',
   gpuBase: CFG.base, defaultModel: '', temperature: 0.4, maxTokens: 2048, stream: true, systemExtra: '', allowCss: true, allowJs: true,
   defaultMode: 'builder', autoSwitch: true, imgApi: 'https://api-inference.huggingface.co/models/Qwen/Qwen-Image-2.1', vidApi: 'https://api-inference.huggingface.co/models/Lightricks/LTX-2.5', clipSeconds: 8, autoStitch: true,
-  agentName: 'Amanda', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'kokoro', voice: 'sarah', voiceSpeed: 1.0, ttsUrl: 'http://127.0.0.1:8090/v1', ttsGpuUrl: 'http://127.0.0.1:8090/v1', autoSpeak: true, micMode: 'toggle', sttSource: 'browser',
+  agentName: 'Amanda', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'kokoro', voice: 'sarah', voiceSpeed: 1.0, ttsUrl: 'http://127.0.0.1:8090/v1', ttsGpuUrl: 'http://127.0.0.1:8090/v1', autoSpeak: true, micMode: 'toggle', sttSource: 'browser', mouthX: 50, mouthY: 63, mouthW: 11,
   userName: '', vernacular: '', liveGreet: true, bargeIn: true, avatarOn: true, webResearch: true, listenLang: 'English', berylUrl: 'http://127.0.0.1:8882/v1', voiceTemp: 0.8, voiceV: 2, voiceFx: {},
   nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU',
   registryUrl: 'http://localhost:11436/v1', cpuBase: 'http://localhost:11438/v1', miniBase: 'http://localhost:11439/v1', hfGpuOn: false, nvidiaModels: ['zai-org/glm-4.5-air', 'zai-org/glm-4.5'], nvidiaKey: '', nvidiaEnterpriseKey: '', nvidiaEnterpriseModels: [],
@@ -1450,6 +1463,13 @@ function VoiceStudio({ S, set, onClose }) {
             <Field label="Room">{fx('room', 'Dry ↔ roomy')}</Field>
           </div>
           <div style={{ height: '1px', background: 'var(--border)', margin: '14px 0' }}></div>
+          <div className="adm-grid" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+            <Field label={'Mouth X · ' + S.mouthX}><input type="range" min="20" max="80" step="1" value={S.mouthX || 50} onChange={e => set('mouthX', Number(e.target.value))} style={{ width: '100%' }} /></Field>
+            <Field label={'Mouth Y · ' + S.mouthY}><input type="range" min="30" max="90" step="1" value={S.mouthY || 63} onChange={e => set('mouthY', Number(e.target.value))} style={{ width: '100%' }} /></Field>
+            <Field label={'Mouth size · ' + S.mouthW}><input type="range" min="5" max="22" step="1" value={S.mouthW || 11} onChange={e => set('mouthW', Number(e.target.value))} style={{ width: '100%' }} /></Field>
+          </div>
+          <p className="adm-hint">FACE SYNC — her photo's mouth position. Slide X/Y while she speaks to land it on her lips; the mouth opens with her voice's energy and widens with its brightness.</p>
+          <div style={{ height: '1px', background: 'var(--border)', margin: '14px 0' }}></div>
           <div className="adm-grid" style={{ gridTemplateColumns: '1fr' }}>
             <div className="adm-label">VOICE CLONING</div>
             <div className="adm-hint">Record or upload 10–30 seconds of the voice you want. The clone server (scripts/voice_clone_server.py, port 8091) learns it and it joins your voice list as clone:name.</div>
@@ -1796,21 +1816,65 @@ function AvatarStatus({ corner }) {
   return <div style={{ marginTop: 4, fontSize: 12, color }}>Face link: {st}</div>;
 }
 
-function AvatarCanvas() {
+function AvatarCanvas({ S }) {
   const ref = useRef(null);
   useEffect(() => {
     let raf;
     const c = ref.current, g = c.getContext('2d');
     const draw = () => {
       const b = AvatarLink.frameAt(VoiceOut.clock(), performance.now() / 1000);
+      const dpr = window.devicePixelRatio || 1, w = Math.round(c.clientWidth * dpr), h = Math.round(c.clientHeight * dpr);
+      if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+      g.clearRect(0, 0, w, h);
       if (b) {
-        const dpr = window.devicePixelRatio || 1, w = Math.round(c.clientWidth * dpr), h = Math.round(c.clientHeight * dpr);
-        if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
         const s = Math.max(w / b.width, h / b.height), dw = b.width * s, dh = b.height * s;
         g.drawImage(b, (w - dw) / 2, (h - dh) * 0.2, dw, dh);
         c.style.opacity = '1';
         if (window.__craneTest) window.__craneTest.avatarDrawn++;
-      } else c.style.opacity = '0';
+      } else {
+        // THE TALKING PORTRAIT — no face server needed: her real voice drives
+        // a viseme mouth over her photo. Energy opens, treble widens, bass rounds.
+        const f = VoiceOut.features();
+        const st = S || {};
+        if (f.speaking && f.energy > 0.015) {
+          const mx = (st.mouthX || 50) / 100 * w, my = (st.mouthY || 63) / 100 * h;
+          const base = (st.mouthW || 11) / 100 * w;
+          const openness = Math.max(0.12, Math.min(1, f.energy * 1.5));
+          const wideness = 0.72 + (f.high || 0) * 0.55;
+          const mw = base * wideness, mh = base * openness * 0.62;
+          // soft inner mouth
+          const gr = g.createRadialGradient(mx, my, 0, mx, my, Math.max(mw, mh) / 2);
+          gr.addColorStop(0, 'rgba(25,10,10,' + (0.28 + openness * 0.34) + ')');
+          gr.addColorStop(0.55, 'rgba(35,14,12,' + (0.18 + openness * 0.2) + ')');
+          gr.addColorStop(1, 'rgba(35,14,12,0)');
+          g.save();
+          g.translate(mx, my);
+          g.scale(wideness, 1);
+          g.beginPath();
+          g.ellipse(0, 0, mw / 2 / wideness, mh / 2, 0, 0, Math.PI * 2);
+          g.restore();
+          g.save();
+          g.beginPath();
+          g.ellipse(mx, my, mw / 2, mh / 2, 0, 0, Math.PI * 2);
+          g.fillStyle = gr;
+          g.shadowColor = 'rgba(20,8,8,.35)';
+          g.shadowBlur = 8 * dpr;
+          g.fill();
+          g.restore();
+          // faint lip line
+          g.save();
+          g.globalAlpha = 0.35 + openness * 0.2;
+          g.strokeStyle = 'rgba(40,16,14,.55)';
+          g.lineWidth = Math.max(1, 1.4 * dpr);
+          g.beginPath();
+          g.ellipse(mx, my, mw / 2, mh / 2, 0, 0, Math.PI * 2);
+          g.stroke();
+          g.restore();
+          c.style.opacity = '1';
+        } else {
+          c.style.opacity = '0';
+        }
+      }
       raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
@@ -3094,7 +3158,7 @@ function App() {
 
       <div className="agent-card">
         <img src={cardSrc} alt="Amanda — Voice Agent" />
-        <AvatarCanvas />
+        <AvatarCanvas S={S} />
         <AvatarStatus corner />
         <div className="agent-card-overlay"></div>
 
