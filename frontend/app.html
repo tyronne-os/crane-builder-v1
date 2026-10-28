@@ -980,6 +980,7 @@ const DEFAULT_SETTINGS = {
   agentName: 'Amanda', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'kokoro', voice: 'sarah', voiceSpeed: 1.0, ttsUrl: 'http://127.0.0.1:8090/v1', ttsGpuUrl: 'http://127.0.0.1:8090/v1', autoSpeak: true, micMode: 'toggle', sttSource: 'browser', mouthX: 50, mouthY: 63, mouthW: 11,
   userName: '', vernacular: '', liveGreet: true, bargeIn: true, avatarOn: true, webResearch: true, listenLang: 'English', berylUrl: 'http://127.0.0.1:8882/v1', voiceTemp: 0.8, voiceV: 2, voiceFx: {},
   nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU',
+  gpuInstances: [{ name: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU', endpoint: '' }],
   registryUrl: 'http://localhost:11436/v1', cpuBase: 'http://localhost:11438/v1', miniBase: 'http://localhost:11439/v1', hfGpuOn: false, nvidiaModels: ['zai-org/glm-4.5-air', 'zai-org/glm-4.5'], nvidiaKey: '', nvidiaEnterpriseKey: '', nvidiaEnterpriseModels: [],
   providers: { 
     anthropic: '', 'openrouter': '', 'huggingface': '', 'google': '', 'meta-muse': '',
@@ -1644,10 +1645,12 @@ function Toggle({ on, onChange }) {
 function InfraPanel({ s, set, onTest, online, models }) {
   const [tags, setTags] = useState(null);
   const [checked, setChecked] = useState(null);
-  const base = (s.gpuBase || '').replace(/\/+$/, '').replace(/\/v1$/, '');
+  const instances = s.gpuInstances || [];
+  const activeInst = instances.find(i => i.name === s.nodeName);
+  const base = ((activeInst && activeInst.endpoint) || s.gpuBase || '').replace(/\/+$/, '').replace(/\/v1$/, '');
   const pull = () => {
     if (!base) return;
-    if (base) fetch(base + '/api/tags', { headers: tunnelHdr(base) })
+    fetch(base + '/api/tags', { headers: tunnelHdr(base) })
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { setTags(j.models || []); setChecked(new Date().toLocaleTimeString()); })
       .catch(() => { setTags(null); setChecked(new Date().toLocaleTimeString()); });
@@ -1658,6 +1661,14 @@ function InfraPanel({ s, set, onTest, online, models }) {
     const t = setInterval(pull, 30000);
     return () => clearInterval(t);
   }, [base]);
+  const pickInstance = (name) => {
+    const inst = instances.find(i => i.name === name);
+    if (!inst) return;
+    set('nodeName', inst.name);
+    set('region', inst.region || '');
+    set('gpu', inst.gpu || '');
+    set('gpuBase', inst.endpoint || s.gpuBase);
+  };
   const totalGb = tags ? (tags.reduce((a, m) => a + (m.size || 0), 0) / 1e9).toFixed(1) : '—';
   const row = (label, hint, children) => (
     <div className="adm-field">
@@ -1668,7 +1679,13 @@ function InfraPanel({ s, set, onTest, online, models }) {
   );
   return (
     <div className="adm-grid">
-      {row('GPU node name', null, <input className="adm-input" value={s.nodeName || ''} onChange={e => set('nodeName', e.target.value)} />)}
+      {instances.length > 1
+        ? row('GPU instance', 'Select which node to route to', (
+            <select className="adm-input" value={s.nodeName} onChange={e => pickInstance(e.target.value)}>
+              {instances.map(i => <option key={i.name} value={i.name}>{i.name} · {i.region} · {i.gpu}</option>)}
+            </select>
+          ))
+        : row('GPU node name', null, <input className="adm-input" value={s.nodeName || ''} onChange={e => set('nodeName', e.target.value)} />)}
       {row('Region / zone', null, <input className="adm-input" value={s.region || ''} onChange={e => set('region', e.target.value)} />)}
       {row('GPU', null, <input className="adm-input" value={s.gpu || ''} readOnly />)}
       {row('Models folder', 'Drop small models here', <input className="adm-input" readOnly value="/opt/berylize/small-models" />)}
@@ -1691,6 +1708,17 @@ function InfraPanel({ s, set, onTest, online, models }) {
            ))}
         </div>
       </div>
+      {instances.length > 0 && (
+        <div style={{ gridColumn: '1/-1', marginTop: '8px' }}>
+          <div className="adm-label" style={{ marginBottom: '4px' }}>ALL GPU INSTANCES ({instances.length})</div>
+          {instances.map(i => (
+            <div key={i.name} onClick={() => instances.length > 1 && pickInstance(i.name)} style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', padding: '4px 10px', borderRadius: '8px', cursor: instances.length > 1 ? 'pointer' : 'default', background: i.name === s.nodeName ? 'rgba(238,202,80,.07)' : 'var(--surface)', border: i.name === s.nodeName ? '1px solid rgba(238,202,80,.3)' : '1px solid var(--border)', fontFamily: "'Geist Mono',monospace", fontSize: '10px', marginBottom: '3px' }}>
+              <span style={{ color: i.name === s.nodeName ? 'var(--gold)' : 'var(--fg-4)' }}>{i.name === s.nodeName ? '◉' : '○'} {i.name}</span>
+              <span style={{ color: 'var(--fg-5)' }}>{i.region} · {i.gpu}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
