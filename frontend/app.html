@@ -2098,6 +2098,9 @@ function App() {
   const [hfGpuModels, setHfGpuModels] = useState([]);
   const [hfGpuConnected, setHfGpuConnected] = useState(false);
   const [hfGpuErr, setHfGpuErr] = useState('');
+  const [hfExpanded, setHfExpanded] = useState(false);
+  const [ocExpanded, setOcExpanded] = useState(false);
+  const [gpuTagInfo, setGpuTagInfo] = useState(null);
   const [hfGpuTimer, setHfGpuTimer] = useState(() => { try { return JSON.parse(localStorage.getItem('crane.hfGpu') || '{"seconds":0,"requests":0}'); } catch (e) { return { seconds: 0, requests: 0 }; } });
   const [menuOpen, setMenuOpen] = useState(false);
   const [online, setOnline] = useState(null);
@@ -2250,6 +2253,14 @@ function App() {
       .catch(() => Promise.all([localCpu, localMini]).then(([extra, mn]) => apply(extra.map(id => ({ id })), null, mn)));
   };
   useEffect(() => { refreshModels(); }, [S.gpuBase, S.registryUrl, S.cpuBase, S.miniBase]);
+  // IN GPU panel detail: real names, sizes, download dates + storage-leak check
+  // from Ollama /api/tags through the same proxy chain the chat uses.
+  useEffect(() => {
+    fetch((S.gpuBase || '').replace(/\/+$/, '').replace(/\/v1$/, '') + '/api/tags', { headers: tunnelHdr(S.gpuBase || '') })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => setGpuTagInfo(j.models || []))
+      .catch(() => setGpuTagInfo(null));
+  }, [S.gpuBase, models.length]);
   // One-time: carry Amanda's saved persona over from her old Ollama-style id to the
   // llama.cpp alias; if none was saved, seed her persona so she arrives fully formed.
   useEffect(() => {
@@ -2947,8 +2958,23 @@ function App() {
                   <ModelRow key={DEFAULT_LOCAL_MODEL} id={DEFAULT_LOCAL_MODEL} label="Amanda" tag="ALWAYS READY" tagColor="#eeca50" active={model === DEFAULT_LOCAL_MODEL} hasProfile={!!S.profiles[DEFAULT_LOCAL_MODEL]} onPick={() => { setModel(DEFAULT_LOCAL_MODEL); if (S.autoSwitch) setCenterMode('builder'); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />
                   <ModelRow key={AMANDA_MINI} id={AMANDA_MINI} label="Amanda Mini" tag={miniModels.includes(AMANDA_MINI) ? 'ALWAYS READY' : 'OFFLINE'} tagColor={miniModels.includes(AMANDA_MINI) ? '#22d3ee' : '#71717a'} active={model === AMANDA_MINI} hasProfile={!!S.profiles[AMANDA_MINI]} onPick={() => { setModel(AMANDA_MINI); if (S.autoSwitch) setCenterMode('builder'); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
-                  <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>STORED IN GPU · {S.nodeName.toUpperCase()}</div>
-                  {models.length ? models.map(id => <ModelRow key={id} id={id} label={short(id)} tag="LOCAL" tagColor="#34d399" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>none found — start the GPU, then the tunnel</div>}
+                  <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>IN GPU · {S.nodeName.toUpperCase()} · L4 · {S.region}</div>
+                  {models.length ? (
+                    <div title={models.map(id => short(id)).join('\n')}>
+                      <div className="mrow" style={{cursor:'default'}}>
+                        <span className="mname" style={{fontSize:'10px'}}>{models.length} model{models.length > 1 ? 's' : ''} stored</span>
+                        <span className="mtag" style={{color:'#34d399'}}>● CONNECTED</span>
+                      </div>
+                      {models.map(id => (
+                        <ModelRow key={id} id={id} label={short(id)} tag="GPU" tagColor="#34d399" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />
+                      ))}
+                    </div>
+                  ) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>none found — start the GPU, then the tunnel</div>}
+                  {gpuTagInfo && gpuTagInfo.length > 0 && (
+                    <div style={{padding:'4px 10px 6px',fontSize:'8.5px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace",cursor:'help'}} title={gpuTagInfo.map(m => short(m.name) + '  ' + (m.size/1e9).toFixed(2) + 'GB  dl:' + (m.modified_at || '').slice(0,10) + (m.size > 12e9 ? '  LEAKAGE:NO' : '')).join('\n')}>
+                      ⓘ hover: {gpuTagInfo.length} models · {(gpuTagInfo.reduce((s,m) => s + (m.size||0), 0)/1e9).toFixed(1)}GB total
+                    </div>
+                  )}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>CPU · NO VRAM USED</div>
                   {cpuOthers.length ? cpuOthers.map(id => <ModelRow key={id} id={id} label={short(id)} tag="CPU" tagColor="#94a3b8" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>no other local models — Amanda runs solo; add more to THE STAFF</div>}
@@ -2969,16 +2995,24 @@ function App() {
                       {!S.hfGpuOn ? 'click to power on' : hfGpuConnected ? 'POWERED BY HF · ' + hfGpuModels.length + ' models' : hfGpuErr || 'connecting…'}
                     </span>
                   </div>
-                  {S.hfGpuOn && (hfGpuModels.length ? hfGpuModels.map(id => <ModelRow key={id} id={id} label={short(id)} tag="HF" tagColor="#eab308" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:hfGpuErr && hfGpuErr.indexOf('token') >= 0 ? 'var(--gold)' : 'var(--fg-5)',fontFamily:"'Geist Mono',monospace",cursor:hfGpuErr && hfGpuErr.indexOf('token') >= 0 ? 'pointer' : 'default'}} onClick={() => { if (!hfGpuToken()) pasteHfToken(); }}>{hfGpuErr && hfGpuErr.indexOf('token') >= 0 ? '📋 click HERE to paste your HF token' : hfGpuErr || 'loading the catalog…'}</div>)}
+                  {S.hfGpuOn && (hfGpuModels.length ? (
+                    <div>
+                      <div className="mrow" style={{cursor:'pointer'}} onClick={() => setHfExpanded(e => !e)}>
+                        <span className="mname">HF cloud models</span>
+                        <span className="mtag" style={{color:'#eab308'}}>{hfGpuModels.length} · {hfExpanded ? 'collapse ▴' : 'expand ▾'}</span>
+                      </div>
+                      {hfExpanded && hfGpuModels.slice(0, 60).map(id => <ModelRow key={id} id={id} label={short(id)} tag="HF" tagColor="#eab308" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />)}
+                    </div>
+                  ) : <div style={{padding:'6px 10px',fontSize:'10px',color:hfGpuErr && hfGpuErr.indexOf('token') >= 0 ? 'var(--gold)' : 'var(--fg-5)',fontFamily:"'Geist Mono',monospace",cursor:hfGpuErr && hfGpuErr.indexOf('token') >= 0 ? 'pointer' : 'default'}} onClick={() => { if (!hfGpuToken()) pasteHfToken(); }}>{hfGpuErr && hfGpuErr.indexOf('token') >= 0 ? '📋 click HERE to paste your HF token' : hfGpuErr || 'loading the catalog…'}</div>)}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>OPENCODE · FREE VIA OPENROUTER</div>
-                  {opencodeModels === null ? (
-                    <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>loading free models…</div>
-                  ) : opencodeModels.length ? opencodeModels.map(({id, label}) => (
+                  <div className="mrow" style={{cursor:'pointer'}} onClick={() => setOcExpanded(e => !e)}>
+                    <span className="mname">OpenCode · free via OpenRouter</span>
+                    <span className="mtag" style={{color:'#22d3ee'}}>{opencodeModels.length} models · {ocExpanded ? 'collapse ▴' : 'expand ▾'}</span>
+                  </div>
+                  {ocExpanded && opencodeModels.slice(0, 20).map(({id, label}) => (
                     <ModelRow key={id} id={id} label={label} tag="FREE" tagColor="#22d3ee" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />
-                  )) : (
-                    <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>no free models came back — check your connection</div>
-                  )}
+                  ))}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>TYPESAFE · SYSTEM ONE</div>
                   <div className="mrow" style={{cursor:'pointer'}} onClick={() => {
