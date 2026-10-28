@@ -159,7 +159,7 @@ textarea::placeholder { color: var(--fg-5); }
 .btn-send:active { transform: scale(.94); }
 
 /* ── main panel ── */
-.main-panel { display: flex; flex-direction: column; min-height: 0; background: #0c0c0e; padding: 14px; gap: 10px; }
+.main-panel { display: flex; flex-direction: column; min-height: 0; background: #0c0c0e; padding: 14px; gap: 10px; position: relative; }
 .url-bar { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); font-family: 'Geist Mono', monospace; font-size: 12px; color: var(--fg-4); flex-shrink: 0; }
 .url-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .live-badge { color: var(--green); }
@@ -986,7 +986,7 @@ const DEFAULT_SETTINGS = {
     claude: '', 'gemini': '', 'openai': '',
     github: '', kaggle: '', ngrok: '', typesafe: ''
   },
-  gpuAuto: true, gpuRate: 0.35, jevRoute: true, designStyle: '', cloneUrl: 'http://127.0.0.1:8091/v1', memoryUrl: 'http://127.0.0.1:8092', terminalUrl: 'http://127.0.0.1:11443', skills: {},
+  gpuAuto: true, gpuRate: 0.35, jevRoute: true, designStyle: '', cloneUrl: 'http://127.0.0.1:8091/v1', memoryUrl: 'http://127.0.0.1:8092', terminalUrl: 'http://127.0.0.1:11443', skills: {}, diffusionSettings: { steps: 4, guidance: 1.0, width: 1024, height: 1024, seed: '', negative: '' },
   accent: '#eeca50', fontScale: 1, showAgent: true,
   cuEnabled: true, cuUrl: 'http://127.0.0.1:8765', cuToken: '', cuConfirm: true,
   profiles: {},
@@ -1224,6 +1224,42 @@ function SkillsPanel({ S, set, onClose }) {
             <p className="adm-hint">Armed skills inject into every build conversation. Toggle with the ◉ switch here, or {'/skill <name>'} in chat. Skills stack with /design and Jev routing.</p>
           </div>
         </section>
+      </div>
+    </div>
+  );
+}
+
+function DiffusionDrawer({ S, set, onClose }) {
+  const d = S.diffusionSettings || {};
+  const upd = (k, v) => set('diffusionSettings', { ...d, [k]: v });
+  const num = (k, label, min, max, step) => (
+    <label key={k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: 'var(--fg-3)', marginBottom: '8px' }}>
+      <span>{label}</span>
+      <input type="number" min={min} max={max} step={step} value={d[k]} onChange={e => upd(k, Number(e.target.value))} style={{ width: '64px', background: 'var(--surface)', border: '1px solid var(--border-mid)', borderRadius: '6px', color: 'var(--fg)', padding: '4px 6px', fontFamily: "'Geist Mono',monospace", fontSize: '11px' }} />
+    </label>
+  );
+  return (
+    <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: '240px', background: 'rgba(24,24,27,.97)', borderLeft: '1px solid var(--border-mid)', zIndex: 5, padding: '14px 14px 10px', overflowY: 'auto', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+        <span style={{ fontFamily: "'Geist',sans-serif", fontWeight: 700, fontSize: '11px', letterSpacing: '.1em', color: 'var(--gold)' }}>DIFFUSION</span>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--fg-5)', cursor: 'pointer', fontSize: '14px', padding: '0 4px' }}>×</button>
+      </div>
+      {num('steps', 'Steps', 1, 50, 1)}
+      {num('guidance', 'Guidance', 0, 20, 0.5)}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+        <div style={{ flex: 1 }}>{num('width', 'Width', 256, 2048, 64)}</div>
+        <div style={{ flex: 1 }}>{num('height', 'Height', 256, 2048, 64)}</div>
+      </div>
+      <label style={{ display: 'block', fontSize: '11px', color: 'var(--fg-3)', marginBottom: '8px' }}>
+        <span style={{ display: 'block', marginBottom: '4px' }}>Seed <span style={{ color: 'var(--fg-5)' }}>(blank = random)</span></span>
+        <input type="number" value={d.seed || ''} onChange={e => upd('seed', e.target.value ? Number(e.target.value) : '')} placeholder="random" style={{ width: '100%', background: 'var(--surface)', border: '1px solid var(--border-mid)', borderRadius: '6px', color: 'var(--fg)', padding: '5px 8px', fontFamily: "'Geist Mono',monospace", fontSize: '11px' }} />
+      </label>
+      <label style={{ display: 'block', fontSize: '11px', color: 'var(--fg-3)', marginBottom: '8px' }}>
+        <span style={{ display: 'block', marginBottom: '4px' }}>Negative prompt</span>
+        <textarea rows="3" value={d.negative || ''} onChange={e => upd('negative', e.target.value)} placeholder="blurry, watermark, extra fingers…" style={{ width: '100%', background: 'var(--surface)', border: '1px solid var(--border-mid)', borderRadius: '6px', color: 'var(--fg)', padding: '6px 8px', fontFamily: "'Geist Mono',monospace", fontSize: '10.5px', resize: 'vertical' }} />
+      </label>
+      <div style={{ marginTop: 'auto', paddingTop: '8px', borderTop: '1px solid var(--border)' }}>
+        <div className="adm-hint" style={{ fontSize: '9.5px' }}>Settings apply to every generation — from the chat composer's ```image blocks or the center prompt. Saved automatically.</div>
       </div>
     </div>
   );
@@ -2228,6 +2264,7 @@ function App() {
   const [studioOpen, setStudioOpen] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
+  const [diffDrawerOpen, setDiffDrawerOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [cardSrc, setCardSrc] = useState('uploads/amanda.jpg');
   useEffect(() => {
@@ -2397,8 +2434,16 @@ function App() {
       const headers = { 'Content-Type': 'application/json' };
       if (hfToken) headers['Authorization'] = 'Bearer ' + hfToken;
       const ip = S.profiles[HF_DIFFUSION_MODELS[0].id] || {};
+      const dset = S.diffusionSettings || {};
       const body = { inputs: withProfile(imgPrompt, ip) };
-      if (ip.negative) body.parameters = { negative_prompt: ip.negative };
+      body.parameters = Object.assign(
+        { negative_prompt: ip.negative || dset.negative || '',
+          num_inference_steps: dset.steps || 4,
+          guidance_scale: dset.guidance || 1.0,
+          width: dset.width || 1024, height: dset.height || 1024,
+          seed: dset.seed || undefined },
+        ip.negative ? { negative_prompt: ip.negative } : {}
+      );
       if (refImg) body.image = refImg.split(',')[1];
       const r = await fetch(imgApiBase, { method: 'POST', headers, body: JSON.stringify(body) });
       if (!r.ok) { const t = await r.text(); throw new Error(r.status + ' ' + t.slice(0,120)); }
@@ -3164,6 +3209,12 @@ function App() {
       )}
 
       {centerMode === 'terminal' && <TerminalPanel S={S} />}
+      {(centerMode === 'image' || centerMode === 'video') && (
+        <button onClick={() => setDiffDrawerOpen(o => !o)} title="Diffusion settings — steps, guidance, seed, negative prompt" style={{ position: 'absolute', top: '8px', right: '8px', zIndex: 6, background: 'rgba(24,24,27,.95)', border: '1px solid var(--border-mid)', borderRadius: '8px', color: diffDrawerOpen ? 'var(--gold)' : 'var(--fg-4)', padding: '5px 10px', fontSize: '10px', fontWeight: 700, letterSpacing: '.08em', cursor: 'pointer', fontFamily: "'Geist',sans-serif" }}>⚙ DIFF</button>
+      )}
+      {(centerMode === 'image' || centerMode === 'video') && diffDrawerOpen && (
+        <DiffusionDrawer S={S} set={setSetting} onClose={() => setDiffDrawerOpen(false)} />
+      )}
       {centerMode === 'image' && (
         <div className="diffusion-panel">
           <div className="diff-canvas">
