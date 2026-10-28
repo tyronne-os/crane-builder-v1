@@ -1790,6 +1790,8 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
             <Field label="Model registry (discovery)" hint="Read-only. Reports which models are really installed on the GPU box. Leave blank to fall back to listing the Ollama endpoint directly.">{inp('registryUrl')}</Field>
             <Field label="NVIDIA API key" hint="From build.nvidia.com. Sent as a Bearer token to integrate.api.nvidia.com. Stored in this browser only."><input className="adm-input" type="password" value={s.nvidiaKey || ''} onChange={e => set('nvidiaKey', e.target.value)} spellCheck={false} /></Field>
             <Field label="NVIDIA Enterprise API key" hint="For exclusive advanced digital human models. Sent as Bearer token to integrate.api.nvidia.com."><input className="adm-input" type="password" value={s.nvidiaEnterpriseKey || ''} onChange={e => set('nvidiaEnterpriseKey', e.target.value)} spellCheck={false} /></Field>
+            <Field label="Azure OpenAI endpoint" hint="e.g. https://<resource>.openai.azure.com/openai/deployments/<deployment-name>"><input className="adm-input" type="text" value={s.azureBase || ''} onChange={e => set('azureBase', e.target.value)} /></Field>
+            <Field label="Azure OpenAI key" hint="From Azure portal → Resource → Keys. Sent as api-key header."><input className="adm-input" type="password" value={s.azureKey || ''} onChange={e => set('azureKey', e.target.value)} /></Field>
             <Field label="NVIDIA model ids" hint="One per line. api.nvidia.com cannot be queried for a model list, so paste the ids you want. Example: meta/llama-3.3-70b-instruct"><textarea className="adm-input" rows="6" spellCheck={false} style={{fontFamily:"'Geist Mono',monospace",fontSize:'11px'}} value={(s.nvidiaModels || []).join('\n')} onChange={e => set('nvidiaModels', e.target.value.split('\n').map(x => x.trim()).filter(Boolean))} /></Field>
             <Field label="NVIDIA Enterprise model ids" hint="Exclusive digital human models. One per line."><textarea className="adm-input" rows="4" spellCheck={false} style={{fontFamily:"'Geist Mono',monospace",fontSize:'11px'}} value={(s.nvidiaEnterpriseModels || []).join('\n')} onChange={e => set('nvidiaEnterpriseModels', e.target.value.split('\n').map(x => x.trim()).filter(Boolean))} /></Field>
             <div className="adm-field" style={{gridColumn:'1/-1'}}>
@@ -2887,6 +2889,9 @@ function App() {
       } else if (nvidia) {
         if (!S.nvidiaKey) throw new Error('NVIDIA API key not set');
         headers = { Authorization: 'Bearer ' + S.nvidiaKey };
+      } else if (S.azureKey && S.azureBase) {
+        target = S.azureBase.replace(/\/+$/, '') + '/openai/deployments';
+        headers = { 'api-key': S.azureKey };
       } else if (provider === 'anthropic' || provider === 'claude') {
         const key = S.providers?.anthropic || S.providers?.claude || '';
         if (!key) throw new Error('Anthropic subscription key not set. Open Settings → Provider API Keys');
@@ -3104,6 +3109,11 @@ function App() {
               <button className="model-chip" onClick={() => { if (!menuOpen) { refreshModels(); loadOpencode(); } setMenuOpen(o => !o); }}>{model === DEFAULT_LOCAL_MODEL ? 'AMANDA' : model === AMANDA_MINI ? 'AMANDA MINI' : short(model)}
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>
               </button>
+              {S.azureKey && (
+                <div style={{position: 'absolute', right: 0, top: 0, background: 'var(--surface)', border: '1px solid var(--border-mid)', borderRadius: '8px', padding: '4px 8px', fontSize: '10px', color: '#34d399', fontFamily: "'Geist',sans-serif', sans-serif', sans-serif'}}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 16V8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8M5 12h8a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2z"/></svg> Azure
+                </div>
+              )}
               {menuOpen && (
                 <div style={{ position: 'absolute', bottom: '34px', left: 0, minWidth: '240px', maxHeight: '62vh', overflowY: 'auto', background: 'var(--surface2)', border: '1px solid var(--border-mid)', borderRadius: '10px', padding: '4px', zIndex: 10, boxShadow: '0 10px 30px rgba(0,0,0,.5)' }}>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>PINNED · YOUR CO-FOUNDER</div>
@@ -3130,6 +3140,14 @@ function App() {
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>CPU · NO VRAM USED</div>
                   {cpuOthers.length ? cpuOthers.map(id => <ModelRow key={id} id={id} label={short(id)} tag="CPU" tagColor="#94a3b8" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>no other local models — Amanda runs solo; add more to THE STAFF</div>}
+                  <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
+                  <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>AZURE OPENAI · COPILOT</div>
+                  {S.azureKey && S.azureBase ? (
+                    <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 16V8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8M5 12h8a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2z"/><svg/>
+                      Azure deployed model: <span style={{color:'#34d399',fontWeight:'500'}}>{selectedModel || 'enter deployment name e.g. "gpt-4o" or "claude-3.5-sonnet"'}</span>
+                    </div>
+                  ) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>set Azure OpenAI endpoint + key in Settings → Chat to enable</div>}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>NVIDIA CLOUD · NIM</div>
                   {nvidiaAll.length ? nvidiaAll.map(({id, label, tag}) => <ModelRow key={id} id={id} label={label} tag={tag} tagColor="#76b900" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />) : <div style={{padding:'6px 10px',fontSize:'10px',color:'var(--fg-5)',fontFamily:"'Geist Mono',monospace"}}>{S.nvidiaKey ? 'catalog came back empty — check the key in Settings' : 'enter your NVIDIA NIM key below — the full catalog loads automatically'}</div>}
