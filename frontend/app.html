@@ -3008,9 +3008,9 @@ function App() {
                   <div style={{padding:'4px 10px 2px',fontSize:'9px',letterSpacing:'.12em',color:'var(--fg-5)',fontFamily:"'Geist',sans-serif"}}>OPENCODE · FREE VIA OPENROUTER</div>
                   <div className="mrow" style={{cursor:'pointer'}} onClick={() => setOcExpanded(e => !e)}>
                     <span className="mname">OpenCode · free via OpenRouter</span>
-                    <span className="mtag" style={{color:'#22d3ee'}}>{opencodeModels.length} models · {ocExpanded ? 'collapse ▴' : 'expand ▾'}</span>
+                    <span className="mtag" style={{color:'#22d3ee'}}>{(opencodeModels || []).length} models · {ocExpanded ? 'collapse ▴' : 'expand ▾'}</span>
                   </div>
-                  {ocExpanded && opencodeModels.slice(0, 20).map(({id, label}) => (
+                  {ocExpanded && (opencodeModels || []).slice(0, 20).map(({id, label}) => (
                     <ModelRow key={id} id={id} label={label} tag="FREE" tagColor="#22d3ee" active={id === model} hasProfile={!!S.profiles[id]} onPick={() => { setModel(id); if (S.autoSwitch) setCenterMode(modelMode(id)); setMenuOpen(false); }} onEdit={k => { setMenuOpen(false); setProfEdit(k); }} />
                   ))}
                   <div style={{height:'1px',background:'var(--border)',margin:'4px 6px'}}></div>
