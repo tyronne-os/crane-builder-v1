@@ -1602,6 +1602,63 @@ function Toggle({ on, onChange }) {
   return <button type="button" className={'adm-toggle' + (on ? ' on' : '')} onClick={() => onChange(!on)}><span></span></button>;
 }
 
+// GPU & Infrastructure — auto-pulls live model detail (sizes, download dates,
+// storage-leak flags) from Ollama /api/tags through whatever endpoint the
+// composer routes through. Refreshes itself every 30s while open.
+function InfraPanel({ s, set, onTest, online, models }) {
+  const [tags, setTags] = useState(null);
+  const [checked, setChecked] = useState(null);
+  const base = (s.gpuBase || '').replace(/\/+$/, '').replace(/\/v1$/, '');
+  const pull = () => {
+    if (!base) return;
+    if (base) fetch(base + '/api/tags', { headers: tunnelHdr(base) })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => { setTags(j.models || []); setChecked(new Date().toLocaleTimeString()); })
+      .catch(() => { setTags(null); setChecked(new Date().toLocaleTimeString()); });
+  };
+  useEffect(() => {
+    pull();
+    if (onTest) onTest();
+    const t = setInterval(pull, 30000);
+    return () => clearInterval(t);
+  }, [base]);
+  const totalGb = tags ? (tags.reduce((a, m) => a + (m.size || 0), 0) / 1e9).toFixed(1) : '—';
+  const row = (label, hint, children) => (
+    <div className="adm-field">
+      <div className="adm-label">{label}</div>
+      {hint ? <div className="adm-hint">{hint}</div> : null}
+      {children}
+    </div>
+  );
+  return (
+    <div className="adm-grid">
+      {row('GPU node name', null, <input className="adm-input" value={s.nodeName || ''} onChange={e => set('nodeName', e.target.value)} />)}
+      {row('Region / zone', null, <input className="adm-input" value={s.region || ''} onChange={e => set('region', e.target.value)} />)}
+      {row('GPU', null, <input className="adm-input" value={s.gpu || ''} readOnly />)}
+      {row('Models folder', 'Drop small models here', <input className="adm-input" readOnly value="/opt/berylize/small-models" />)}
+      <div className="adm-actions">
+        <span className="adm-hint">{online === true ? '✓ ' + models.length + ' models served at ' + s.gpuBase : online === false ? '✕ cannot reach ' + s.gpuBase : ''}</span>
+        {checked ? <span className="adm-hint"> · auto-synced {checked}</span> : null}
+      </div>
+      <div style={{ gridColumn: '1/-1' }}>
+        <div className="adm-label">DOWNLOADED MODELS · {tags ? tags.length : 0} · {totalGb}GB TOTAL</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
+          {tags === null ? <div className="adm-hint">syncing from GPU…</div> :
+           tags.map(m => (
+             <div key={m.name} style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', padding: '5px 10px', borderRadius: '8px', background: 'var(--surface)', border: '1px solid var(--border)', fontFamily: "'Geist Mono',monospace", fontSize: '10.5px' }}>
+               <span style={{ color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>● {short(m.name)}</span>
+               <span style={{ color: 'var(--fg-5)', whiteSpace: 'nowrap' }}>
+                 {((m.size || 0) / 1e9).toFixed(2)}GB · dl {(m.modified_at || '').slice(0, 10)}
+                 {m.size > 12e9 ? <span style={{ color: '#fca5a5', marginLeft: '6px' }}>LEAK</span> : null}
+               </span>
+             </div>
+           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onResetPatches, onEditProfile, voiceErr }) {
   const profList = (title, ids) => (
     <div className="prof-rows">
@@ -1746,14 +1803,7 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
             {profList('Voice model profiles', Object.entries(VOICE_ENGINES).map(([k, v]) => ['voice:' + k, v.label]))}
           </div>)}
 
-          {sec === 'infra' && (<div className="adm-grid">
-            <Field label="GPU node name">{inp('nodeName')}</Field>
-            <Field label="Region / zone">{inp('region')}</Field>
-            <Field label="GPU">{inp('gpu')}</Field>
-            <Field label="Models folder" hint="Drop small models here"><input className="adm-input" readOnly value="/opt/berylize/small-models" /></Field>
-            <div className="adm-actions"><button className="adm-btn gold" onClick={onTest}>Test connection</button><span className="adm-hint">{online === true ? '✓ ' + models.length + ' models served at ' + s.gpuBase : online === false ? '✕ cannot reach ' + s.gpuBase + ' — is the tunnel + proxy running?' : ''}</span></div>
-            <div className="adm-list">{models.map(m => <div key={m}>● {short(m)}</div>)}</div>
-          </div>)}
+          {sec === 'infra' && (<InfraPanel s={s} set={set} onTest={onTest} online={online} models={models} />)}
 
           {sec === 'appearance' && (<div className="adm-grid">
             <Field label="Accent color"><input type="color" className="adm-color" value={s.accent} onChange={e => set('accent', e.target.value)} /></Field>
