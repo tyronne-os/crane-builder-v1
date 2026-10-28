@@ -1731,6 +1731,7 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
     </div>
   );
   const [sec, setSec] = useState('workspace');
+  const [savedMsg, setSavedMsg] = useState('');
   const [voiceMsg, setVoiceMsg] = useState('');
   const eng = VOICE_ENGINES[s.voiceEngine];
   const inp = (k, type) => <input className="adm-input" type={type || 'text'} value={s[k]} onChange={e => set(k, type === 'number' ? Number(e.target.value) : e.target.value)} spellCheck={false} />;
@@ -1887,6 +1888,17 @@ function AdminPanel({ s, set, onClose, models, online, onTest, onClearChat, onRe
             <div className="adm-actions"><button className="adm-btn" onClick={onClearChat}>Clear chat</button><button className="adm-btn" onClick={onResetPatches}>Reset Beryl's design changes</button></div>
             <div className="adm-actions"><button className="adm-btn danger" onClick={() => Object.keys(DEFAULT_SETTINGS).forEach(k => set(k, DEFAULT_SETTINGS[k]))}>Restore all defaults</button></div>
           </div>)}
+
+          <div style={{ position: 'sticky', bottom: 0, left: 0, right: 0, padding: '10px 0', background: 'linear-gradient(transparent, var(--bg) 30%)', borderTop: '1px solid var(--border)', marginTop: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontFamily: "'Geist Mono',monospace", fontSize: '9.5px', color: 'var(--fg-5)', letterSpacing: '.06em' }}>
+              {savedMsg ? <span style={{ color: '#34d399' }}>✓ {savedMsg}</span> : 'Hit SAVE & CLOSE to confirm every section'}
+            </span>
+            <button className="adm-btn gold" style={{ padding: '8px 20px', fontSize: '12px', fontWeight: 700 }} onClick={() => {
+              try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch (e) {}
+              setSavedMsg('ALL SETTINGS SAVED');
+              setTimeout(onClose, 400);
+            }}>💾 SAVE & CLOSE</button>
+          </div>
         </section>
       </div>
     </div>
