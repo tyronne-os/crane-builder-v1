@@ -942,6 +942,7 @@ const modelMode = (id) => isVideoModel(id) ? 'video' : isImageModel(id) ? 'image
 
 const HF_DIFFUSION_MODELS = [
   { id: 'Qwen/Qwen-Image-2.1-Uncensored', label: 'Qwen-Image-2.1-Uncensored', tag: 'HF · image' },
+  { id: 'SG161222/RealVisXL_V5.0', label: 'RealVisXL V5.0 (max realism)', tag: 'HF · image' },
   { id: 'black-forest-labs/FLUX.1-schnell', label: 'FLUX.1-schnell',            tag: 'HF · image' },
   { id: 'Lightricks/LTX-2.5',             label: 'LTX-2.5',                   tag: 'HF · video' },
 ];
@@ -979,8 +980,8 @@ const DEFAULT_SETTINGS = {
   defaultMode: 'builder', autoSwitch: true, imgApi: 'https://api-inference.huggingface.co/models/Qwen/Qwen-Image-2.1', vidApi: 'https://api-inference.huggingface.co/models/Lightricks/LTX-2.5', clipSeconds: 8, autoStitch: true,
   agentName: 'Amanda', agentRole: 'BUILD AGENT · BERYL LABS', voiceEngine: 'kokoro', voice: 'sarah', voiceSpeed: 1.0, ttsUrl: 'http://127.0.0.1:8090/v1', ttsGpuUrl: 'http://127.0.0.1:8090/v1', autoSpeak: true, micMode: 'toggle', sttSource: 'browser', mouthX: 50, mouthY: 63, mouthW: 11,
   userName: '', vernacular: '', liveGreet: true, bargeIn: true, avatarOn: true, webResearch: true, listenLang: 'English', berylUrl: 'http://127.0.0.1:8882/v1', voiceTemp: 0.8, voiceV: 2, voiceFx: {},
-  nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU',
-  gpuInstances: [{ name: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU', endpoint: '' }],
+  nodeName: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU', costUrl: 'https://alike-together-minnesota-requirement.trycloudflare.com',
+  gpuInstances: [{ name: 'berylize-node', region: 'us-east1-c', gpu: 'L4 GPU', endpoint: 'https://sharing-clusters-lucky-furniture.trycloudflare.com/v1' }],
   registryUrl: 'http://localhost:11436/v1', cpuBase: 'http://localhost:11438/v1', miniBase: 'http://localhost:11439/v1', hfGpuOn: false, nvidiaModels: ['zai-org/glm-4.5-air', 'zai-org/glm-4.5'], nvidiaKey: '', nvidiaEnterpriseKey: '', nvidiaEnterpriseModels: [],
   providers: { 
     anthropic: '', 'openrouter': '', 'huggingface': '', 'google': '', 'meta-muse': '',
@@ -2281,6 +2282,11 @@ function App() {
   // GPU session meter — pure bookkeeping in this browser: seconds clocked while the
   // GPU is engaged, priced to the penny at S.gpuRate per hour. Nothing leaves the page.
   const [gpuMeter, setGpuMeter] = useState(() => { try { return JSON.parse(localStorage.getItem('crane.gpuMeter') || '{"on":false,"seconds":0,"cents":0}'); } catch (e) { return { on: false, seconds: 0, cents: 0 }; } });
+  const [gcpCost, setGcpCost] = useState(null);
+  useEffect(() => {
+    const pull = () => fetch(S.costUrl || '').then(r => r.ok ? r.json() : null).then(d => setGcpCost(d)).catch(() => setGcpCost(null));
+    if (S.costUrl) { pull(); const t = setInterval(pull, 60000); return () => clearInterval(t); }
+  }, [S.costUrl]);
   const [updateReady, setUpdateReady] = useState('');
   // GitHub — direct repo access with the user's token (GITHUB_TOKEN in Providers).
   // Live fetch on every open, so a repo made in the terminal appears the next time
@@ -3026,6 +3032,10 @@ function App() {
     {S.showStatus && <div className="status-pill" style={{cursor:'pointer'}} title={'GPU session meter — auto-on with diffusion models. Pure bookkeeping; nothing leaves this browser.'} onClick={() => setGpuMeter(m => ({ ...m, on: !m.on }))}>
       <span className="status-dot" style={gpuMeter.on ? {} : { background: 'var(--fg-5)', animation: 'none' }}></span>
       GPU {gpuMeter.on ? 'ON' : 'OFF'} · ${(gpuMeter.cents / 100).toFixed(4)}
+    </div>}
+    {S.showStatus && <div className="status-pill" title={'berylize-node live cost from GCP — actual uptime × spot rate'}>
+      <span className="status-dot" style={gcpCost && gcpCost.status === 'RUNNING' ? {} : { background: 'var(--fg-5)', animation: 'none' }}></span>
+      {gcpCost ? gcpCost.status + ' · ' + Math.floor(gcpCost.hours) + 'h · $' + gcpCost.cost.toFixed(2) : 'SYNCING…'}
     </div>}
     {S.showStatus && S.hfGpuOn && <div className="status-pill" style={{cursor:'pointer'}} onClick={() => setSetting('hfGpuOn', false)} title={'HF GPU session — click to POWER OFF and stop the clock. ' + hfGpuTimer.requests + ' requests, ' + hfGpuTimer.seconds + 's powered.'}>
       <span className="status-dot" style={hfGpuConnected ? {} : { background: '#eeca50', animation: 'none' }}></span>
